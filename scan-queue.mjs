@@ -118,6 +118,16 @@ async function rebuild(){
  }
  if(failed)throw Error(failed+' pending cities could not be rebuilt');
 }
+export async function repairCatalog(index,{scan,rebuild}){
+ let failed=0;
+ for(const city of index.cities.filter(c=>!c.complete&&c.status==='failed'))if(!await scan(city))failed++;
+ await rebuild();return failed;
+}
+async function repair(){
+ const index=await catalog(resolve('reports/recovery'));
+ const failed=await repairCatalog(index,{scan:scanCity,rebuild});
+ if(failed)throw Error(failed+' city retries failed; mode-list recovery still completed');
+}
 async function scanBatch(){
  const text=await readAsset('plan.json',resolve('reports/discovery'));if(!text)throw Error('No city plan published');
  const plan=JSON.parse(text),ids=(process.env.CITY_IDS??'9,32,35').split(',');let failed=0;
@@ -125,5 +135,5 @@ async function scanBatch(){
  if(failed)throw Error(failed+' city scans failed; last valid data retained');
 }
 if(process.argv[1]&&import.meta.url===pathToFileURL(resolve(process.argv[1])).href){
- try{if(process.argv[2]==='discover')await discover();else if(process.argv[2]==='rebuild')await rebuild();else await scanBatch();}catch(error){console.error(error.message);process.exitCode=1;}
+ try{if(process.argv[2]==='discover')await discover();else if(process.argv[2]==='rebuild')await rebuild();else if(process.argv[2]==='repair')await repair();else await scanBatch();}catch(error){console.error(error.message);process.exitCode=1;}
 }
