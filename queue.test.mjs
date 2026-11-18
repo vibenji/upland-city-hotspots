@@ -31,3 +31,15 @@ test('an unexpectedly shortened index cannot erase a complete city held in backu
  const primary={schemaVersion:1,cities:[{id:'32',complete:true}]},backup={schemaVersion:1,cities:[{id:'9',complete:true},{id:'32',complete:true}]};
  assert.deepEqual(selectCatalog(primary,backup,{initialized:true}).cities.map(c=>c.id).sort(),['32','9']);
 });
+
+import {repairCatalog} from './scan-queue.mjs';
+test('recovery rescans only failed incomplete cities and always backfills pending mode lists',async()=>{
+ const calls=[];
+ const index={cities:[{id:'9',complete:true,rankings:{status:'pending'}},{id:'15',name:'New Orleans',complete:false,status:'failed'},{id:'91',name:'Paris',complete:false,status:'failed'},{id:'117',complete:true,rankings:{status:'pending'}},{id:'120',complete:false,status:'scanning'}]};
+ const failed=await repairCatalog(index,{scan:async c=>{calls.push(c.id);return c.id!=='15';},rebuild:async()=>calls.push('lists')});
+ assert.deepEqual(calls,['15','91','lists']);assert.equal(failed,1);
+});
+test('successful completed maps are never rescanned during list recovery',async()=>{
+ let rebuilt=false;const failed=await repairCatalog({cities:[{id:'9',complete:true,status:'ready'}]},{scan:()=>{throw Error('Must not scan');},rebuild:async()=>{rebuilt=true;}});
+ assert.equal(failed,0);assert.equal(rebuilt,true);
+});
