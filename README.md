@@ -87,3 +87,7 @@ Original scanner code and ideas by Wibenji. Preserve attribution when reusing.
 ### Recovery of incomplete city data
 
 The backfill workflow retries failed, incomplete cities before generating all pending three-mode lists from existing full snapshots. It shares the daily scan concurrency group, so publication cannot race the active all-city run. Successful maps are not scanned again for missing lists. The scan worker retries truncated neighborhood responses with bounded backoff. Explicit unpublished neighborhood placeholders (no geometry, area, center or residents, such as New Orleans AIRPORT) are ignored; malformed published geometry and cities with no published boundaries still fail validation. Complete data means all parcels within the published neighborhood boundaries.
+
+### One named job per city
+
+Daily scans run as separate Bakersfield, Los Angeles and Las Vegas jobs in that order, followed by one named matrix job per remaining city. Failed-map recovery and missing-list backfill also use a separate named job per affected city. Each city has its own logs, status and measurements artifact; only one city runs at a time. Already running workflows retain their original job graph; the new layout applies to subsequent runs.
