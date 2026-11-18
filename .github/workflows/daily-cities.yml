@@ -1,0 +1,95 @@
+name: Daily ordered city scans
+on:
+  schedule:
+    - cron: '17 1 * * *'
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths: [.github/workflows/daily-cities.yml]
+permissions:
+  contents: write
+concurrency:
+  group: daily-city-scan-service
+  cancel-in-progress: false
+env:
+  GH_TOKEN: ${{ github.token }}
+  LIVE_PROCESSOR: 'true'
+jobs:
+  plan:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    outputs:
+      matrix: ${{ steps.discover.outputs.matrix }}
+    steps:
+      - name: Read public source at this commit
+        shell: bash
+        run: |
+          git init source
+          git -C source remote add origin https://github.com/vibenji/upland-city-hotspots.git
+          git -C source fetch --depth 1 origin "$GITHUB_SHA"
+          git -C source checkout --detach FETCH_HEAD
+      - name: Verify queue policy
+        run: node --test source/queue.test.mjs
+      - name: Discover all published cities
+        id: discover
+        working-directory: source
+        run: node scan-queue.mjs discover
+  priority-cities:
+    needs: plan
+    runs-on: ubuntu-24.04
+    timeout-minutes: 200
+    steps:
+      - name: Read public source at this commit
+        shell: bash
+        run: |
+          git init source
+          git -C source remote add origin https://github.com/vibenji/upland-city-hotspots.git
+          git -C source fetch --depth 1 origin "$GITHUB_SHA"
+          git -C source checkout --detach FETCH_HEAD
+      - name: Bakersfield then Los Angeles then Las Vegas
+        working-directory: source
+        env:
+          CITY_IDS: '9,32,35'
+        run: node scan-queue.mjs scan
+      - name: Keep measurements
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: priority-city-measurements
+          path: |
+            source/reports/**/metrics.json
+            source/reports/**/requests.json
+          retention-days: 7
+          if-no-files-found: ignore
+  remaining-cities:
+    needs: [plan, priority-cities]
+    if: ${{ always() && needs.plan.result == 'success' }}
+    strategy:
+      fail-fast: false
+      max-parallel: 1
+      matrix: ${{ fromJSON(needs.plan.outputs.matrix) }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 350
+    steps:
+      - name: Read public source at this commit
+        shell: bash
+        run: |
+          git init source
+          git -C source remote add origin https://github.com/vibenji/upland-city-hotspots.git
+          git -C source fetch --depth 1 origin "$GITHUB_SHA"
+          git -C source checkout --detach FETCH_HEAD
+      - name: Scan next six cities sequentially
+        working-directory: source
+        env:
+          CITY_IDS: ${{ matrix.ids }}
+        run: node scan-queue.mjs scan
+      - name: Keep measurements
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: city-measurements-${{ matrix.batch }}
+          path: |
+            source/reports/**/metrics.json
+            source/reports/**/requests.json
+          retention-days: 7
+          if-no-files-found: ignore
