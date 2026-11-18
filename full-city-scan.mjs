@@ -136,6 +136,9 @@ function cityNeighborhoods(raw,cityId){
  for(const row of raw){
   if(id(row.city_id??row.city?.id)!==cityId)continue;
   let g=row.boundaries;try{if(typeof g==='string')g=JSON.parse(g);}catch{throw Error('Invalid city boundaries.');}
+  // Upland includes unpublished placeholders such as New Orleans AIRPORT.
+  // They have no area, center, residents or geometry; keep all real boundaries strict.
+  if(g==null&&row.area==null&&row.center==null&&!(row.residents>0))continue;
   if(g?.type==='Feature')g=g.geometry;
   if(!['Polygon','MultiPolygon'].includes(g?.type)||!Array.isArray(g.coordinates))throw Error('Missing city boundaries.');
   const polygons=g.type==='Polygon'?[g.coordinates]:g.coordinates;
@@ -452,7 +455,7 @@ function createCityMapScan({storage,fetchImpl=(...args)=>fetch(...args),onUpdate
     try{const body=await response.json(),message=body?.message??body?.error?.message??body?.error;if(typeof message==='string')detail=' '+message.trim().slice(0,300);}catch{}
     throw Object.assign(Error('Map API request failed (HTTP '+response.status+').'+detail),{status:response.status,retryable:[408,429,500,502,503,504].includes(response.status),smaller:[400,413,414,422].includes(response.status)});
    }
-   try{return await response.json();}catch(error){if(controller.signal.aborted)throw error;throw Object.assign(Error('Map API returned invalid or truncated JSON: '+error.message),{smaller:true});}
+   try{return await response.json();}catch(error){if(controller.signal.aborted)throw error;throw Object.assign(Error('Map API returned invalid or truncated JSON: '+error.message),{smaller:true,retryable:true});}
   }catch(error){
    if(controller.signal.aborted)throw Object.assign(Error('Map API response timed out after '+(phase==='headers'?25:60)+' seconds ('+phase+').'),{retryable:true,smaller:true});
    if(error instanceof TypeError)throw Object.assign(Error('Map API network failure: '+error.message),{retryable:true});
