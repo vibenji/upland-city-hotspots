@@ -83,3 +83,7 @@ The journal uses an in-memory structured-clone storage adapter, so Chrome disk l
 For daily distribution, use a compressed file per city rather than committing large uncompressed daily snapshots to Git history.
 
 Original scanner code and ideas by Wibenji. Preserve attribution when reusing.
+
+### Recovery of incomplete city data
+
+The backfill workflow retries failed, incomplete cities before generating all pending three-mode lists from existing full snapshots. It shares the daily scan concurrency group, so publication cannot race the active all-city run. Successful maps are not scanned again for missing lists. The scan worker retries truncated neighborhood responses with bounded backoff. Explicit unpublished neighborhood placeholders (no geometry, area, center or residents, such as New Orleans AIRPORT) are ignored; malformed published geometry and cities with no published boundaries still fail validation. Complete data means all parcels within the published neighborhood boundaries.
