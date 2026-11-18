@@ -1,5 +1,8 @@
 name: Backfill missing hotspot lists
 on:
+  push:
+    branches: [main]
+    paths: [.github/workflows/rebuild-lists.yml]
   workflow_dispatch:
   workflow_run:
     workflows: ['Daily ordered city scans']
@@ -26,6 +29,6 @@ jobs:
           git -C source checkout --detach FETCH_HEAD
       - name: Verify publication and ranking policy
         run: node --test source/*.test.mjs
-      - name: Rebuild pending city lists without rescanning maps
+      - name: Retry failed cities and rebuild pending lists
         working-directory: source
-        run: node scan-queue.mjs rebuild
+        run: node scan-queue.mjs repair
