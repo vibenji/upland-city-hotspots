@@ -1,0 +1,39 @@
+name: Trove full city scan benchmark
+on:
+  push:
+    branches: [main]
+    paths: [.github/workflows/full-city-scan.yml]
+  workflow_dispatch:
+permissions: {}
+concurrency:
+  group: trove-full-city-benchmark
+  cancel-in-progress: false
+jobs:
+  city-scan:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 50
+    env:
+      CITY_ID: '32'
+      OUTPUT_DIR: output
+    steps:
+      - name: Read public benchmark source at this commit
+        shell: bash
+        run: |
+          git init source
+          git -C source remote add origin https://github.com/vibenji/upland-city-hotspots.git
+          git -C source fetch --depth 1 origin "$GITHUB_SHA"
+          git -C source checkout --detach FETCH_HEAD
+          node --version
+          node --check source/full-city-scan.mjs
+      - name: Verify benchmark with one synthetic tile
+        run: OUTPUT_DIR=smoke-output node source/full-city-scan.mjs --smoke
+      - name: Scan complete city 32 and measure requests
+        run: node source/full-city-scan.mjs
+      - name: Keep scan measurements and public city data
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: city-32-benchmark
+          path: output/
+          if-no-files-found: warn
+          retention-days: 3
