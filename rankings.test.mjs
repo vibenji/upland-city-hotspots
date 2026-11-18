@@ -35,3 +35,8 @@ test('repeated fee failures back off and leave fees unknown',async()=>{
  const result=await collectFees(['1','2','3','4','5','6','7'],{fetchImpl:async()=>{calls++;return new Response('{}',{status:500});},sleep:async ms=>waits.push(ms)});
  assert.equal(calls,6);assert.equal(Object.keys(result.records).length,0);assert.ok(waits.some(ms=>ms>=3000));
 });
+test('slow fee enrichment respects its time budget so the city queue can continue',async()=>{
+ let at=0,calls=0;
+ const result=await collectFees(['1','2','3','4'],{budgetMs:700,now:()=>at,sleep:async ms=>{at+=ms;},fetchImpl:async url=>{calls++;return new Response(JSON.stringify({prop_id:url.split('/').at(-1),teleport_price:1}),{status:200});}});
+ assert.equal(calls,2);assert.equal(result.budgetReached,true);
+});
