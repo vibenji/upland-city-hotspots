@@ -12,6 +12,10 @@ export function orderCities(rows,names=[]){
  const ids=[...new Set(rows.map(r=>String(r.city_id??r.city?.id??'')).filter(id=>/^[1-9]\d{0,8}$/.test(id)))];
  return [...priority.filter(id=>ids.includes(id)),...ids.filter(id=>!priority.includes(id)).sort((a,b)=>Number(a)-Number(b))].map(id=>({id,name:labels.get(id)??({'9':'Bakersfield','32':'Los Angeles','35':'Las Vegas'}[id])??'City '+id}));
 }
+export const cityMatrix=cities=>({include:cities.map(({id,name})=>({id,name}))});
+export function recoveryCities(index,ids=null){
+ return index.cities.filter(c=>(!ids||ids.includes(c.id))&&((!c.complete&&c.status==='failed')||(c.complete&&c.rankings?.status==='pending')));
+}
 export function mergeIndex(old,record){
  const next=structuredClone(old??{schemaVersion:1,cities:[]});next.cities??=[];
  const i=next.cities.findIndex(c=>c.id===record.id),previous=next.cities[i];
@@ -58,12 +62,12 @@ async function discover(){
  let names=[];try{names=JSON.parse(await readFile('city-names.json','utf8'));}catch{}
  const cities=orderCities(await r.json(),names);
  if(!priority.every(id=>cities.some(c=>c.id===id)))throw Error('Priority city boundaries missing; refusing reordered scan');
- const batches=[];for(let i=3;i<cities.length;i+=6)batches.push({batch:batches.length,ids:cities.slice(i,i+6).map(c=>c.id).join(',')});
+ const matrix=cityMatrix(cities.slice(3));
  const notScannable=names.filter(c=>!cities.some(city=>city.id===c.id)).map(c=>({...c,status:'no-published-neighborhood-boundaries'}));
- const plan={schemaVersion:1,createdAt:new Date().toISOString(),priority,cities,notScannable,batches,runId:process.env.GITHUB_RUN_ID??'local'};
+ const plan={schemaVersion:1,createdAt:new Date().toISOString(),priority,cities,notScannable,matrix,runId:process.env.GITHUB_RUN_ID??'local'};
  await mkdir('reports',{recursive:true});await writeFile('reports/plan.json',JSON.stringify(plan,null,2));await upload(['reports/plan.json']);
- if(process.env.GITHUB_OUTPUT)await appendFile(process.env.GITHUB_OUTPUT,'matrix='+JSON.stringify({include:batches})+'\n');
- console.log(JSON.stringify({event:'plan',cities:cities.length,priority,batches:batches.length}));
+ if(process.env.GITHUB_OUTPUT)await appendFile(process.env.GITHUB_OUTPUT,'matrix='+JSON.stringify(matrix)+'\n');
+ console.log(JSON.stringify({event:'plan',cities:cities.length,priority,cityJobs:matrix.include.length}));
 }
 function runNode(file,env){return new Promise((accept,reject)=>{const child=spawn(process.execPath,[file],{stdio:'inherit',env:{...process.env,...env}});child.on('error',reject);child.on('exit',code=>code===0?accept():reject(Error('Worker exit '+code)));});}
 async function scanCity(city){
@@ -99,10 +103,10 @@ async function scanCity(city){
   return true;
  }catch(error){await updateIndex({...attempt,status:'failed',finishedAt:new Date().toISOString(),error:error.message},dir);console.error(JSON.stringify({event:'city-failed',id:city.id,error:error.message}));return false;}
 }
-async function rebuild(){
+async function rebuild(ids=null){
  const dir=resolve('reports/rebuild');await mkdir(dir,{recursive:true});
  const index=await catalog(dir);let failed=0;
- for(const record of index.cities.filter(c=>c.complete&&c.rankings?.status==='pending')){
+ for(const record of index.cities.filter(c=>c.complete&&c.rankings?.status==='pending'&&(!ids||ids.includes(c.id)))){
   try{
    const url=new URL(record.dataset.url),parts=url.pathname.split('/');
    if(url.hostname!=='github.com'||parts.slice(1,5).join('/')!==REPO+'/releases/download')throw Error('Unexpected dataset URL');
@@ -125,8 +129,15 @@ export async function repairCatalog(index,{scan,rebuild}){
 }
 async function repair(){
  const index=await catalog(resolve('reports/recovery'));
- const failed=await repairCatalog(index,{scan:scanCity,rebuild});
+ const ids=process.env.CITY_IDS?.split(',').filter(Boolean)??null;
+ const selected={...index,cities:recoveryCities(index,ids)};
+ const failed=await repairCatalog(selected,{scan:scanCity,rebuild:()=>rebuild(ids)});
  if(failed)throw Error(failed+' city retries failed; mode-list recovery still completed');
+}
+async function recoveryPlan(){
+ const index=await catalog(resolve('reports/recovery-plan')),matrix=cityMatrix(recoveryCities(index));
+ if(process.env.GITHUB_OUTPUT)await appendFile(process.env.GITHUB_OUTPUT,'matrix='+JSON.stringify(matrix)+'\n'+'has_work='+(matrix.include.length>0)+'\n');
+ console.log(JSON.stringify({event:'recovery-plan',...matrix}));
 }
 async function scanBatch(){
  const text=await readAsset('plan.json',resolve('reports/discovery'));if(!text)throw Error('No city plan published');
@@ -135,5 +146,5 @@ async function scanBatch(){
  if(failed)throw Error(failed+' city scans failed; last valid data retained');
 }
 if(process.argv[1]&&import.meta.url===pathToFileURL(resolve(process.argv[1])).href){
- try{if(process.argv[2]==='discover')await discover();else if(process.argv[2]==='rebuild')await rebuild();else if(process.argv[2]==='repair')await repair();else await scanBatch();}catch(error){console.error(error.message);process.exitCode=1;}
+ try{if(process.argv[2]==='discover')await discover();else if(process.argv[2]==='rebuild')await rebuild();else if(process.argv[2]==='repair')await repair();else if(process.argv[2]==='recovery-plan')await recoveryPlan();else await scanBatch();}catch(error){console.error(error.message);process.exitCode=1;}
 }
