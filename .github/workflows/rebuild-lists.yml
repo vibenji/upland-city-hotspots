@@ -12,13 +12,18 @@ permissions:
 concurrency:
   group: daily-city-scan-service
   cancel-in-progress: false
+env:
+  GH_TOKEN: ${{ github.token }}
+  LIVE_PROCESSOR: 'true'
 jobs:
-  rebuild:
-    if: ${{ github.event_name == 'workflow_dispatch' || github.event.workflow_run.head_branch == 'main' }}
+  plan:
+    name: Plan city repairs
+    if: ${{ github.event_name != 'workflow_run' || github.event.workflow_run.head_branch == 'main' }}
     runs-on: ubuntu-24.04
-    timeout-minutes: 350
-    env:
-      GH_TOKEN: ${{ github.token }}
+    timeout-minutes: 10
+    outputs:
+      matrix: ${{ steps.recovery.outputs.matrix }}
+      has_work: ${{ steps.recovery.outputs.has_work }}
     steps:
       - name: Read public source at this commit
         shell: bash
@@ -29,6 +34,40 @@ jobs:
           git -C source checkout --detach FETCH_HEAD
       - name: Verify publication and ranking policy
         run: node --test source/*.test.mjs
-      - name: Retry failed cities and rebuild pending lists
+      - name: Find cities with failed maps or missing mode lists
+        id: recovery
         working-directory: source
+        run: node scan-queue.mjs recovery-plan
+  city:
+    name: Repair · ${{ matrix.name }}
+    needs: plan
+    if: ${{ needs.plan.outputs.has_work == 'true' }}
+    strategy:
+      fail-fast: false
+      max-parallel: 1
+      matrix: ${{ fromJSON(needs.plan.outputs.matrix) }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    steps:
+      - name: Read public source at this commit
+        shell: bash
+        run: |
+          git init source
+          git -C source remote add origin https://github.com/vibenji/upland-city-hotspots.git
+          git -C source fetch --depth 1 origin "$GITHUB_SHA"
+          git -C source checkout --detach FETCH_HEAD
+      - name: Repair ${{ matrix.name }} map or missing mode lists
+        working-directory: source
+        env:
+          CITY_IDS: ${{ matrix.id }}
         run: node scan-queue.mjs repair
+      - name: Keep city measurements
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: repair-${{ matrix.id }}-measurements
+          path: |
+            source/reports/**/metrics.json
+            source/reports/**/requests.json
+          retention-days: 7
+          if-no-files-found: ignore
