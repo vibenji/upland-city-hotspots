@@ -13,6 +13,7 @@ env:
   LIVE_PROCESSOR: 'true'
 jobs:
   plan:
+    name: Plan city scans
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     outputs:
@@ -31,10 +32,12 @@ jobs:
         id: discover
         working-directory: source
         run: node scan-queue.mjs discover
-  priority-cities:
-    needs: plan
+  bakersfield:
+    name: Bakersfield
+    needs: [plan]
+    if: ${{ always() && needs.plan.result == 'success' }}
     runs-on: ubuntu-24.04
-    timeout-minutes: 200
+    timeout-minutes: 90
     steps:
       - name: Read public source at this commit
         shell: bash
@@ -43,30 +46,89 @@ jobs:
           git -C source remote add origin https://github.com/vibenji/upland-city-hotspots.git
           git -C source fetch --depth 1 origin "$GITHUB_SHA"
           git -C source checkout --detach FETCH_HEAD
-      - name: Bakersfield then Los Angeles then Las Vegas
+      - name: Scan Bakersfield and publish mode lists
         working-directory: source
         env:
-          CITY_IDS: '9,32,35'
+          CITY_IDS: '9'
         run: node scan-queue.mjs scan
-      - name: Keep measurements
+      - name: Keep city measurements
         if: always()
         uses: actions/upload-artifact@v7
         with:
-          name: priority-city-measurements
+          name: city-9-measurements
+          path: |
+            source/reports/**/metrics.json
+            source/reports/**/requests.json
+          retention-days: 7
+          if-no-files-found: ignore
+  los-angeles:
+    name: Los Angeles
+    needs: [plan, bakersfield]
+    if: ${{ always() && needs.plan.result == 'success' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    steps:
+      - name: Read public source at this commit
+        shell: bash
+        run: |
+          git init source
+          git -C source remote add origin https://github.com/vibenji/upland-city-hotspots.git
+          git -C source fetch --depth 1 origin "$GITHUB_SHA"
+          git -C source checkout --detach FETCH_HEAD
+      - name: Scan Los Angeles and publish mode lists
+        working-directory: source
+        env:
+          CITY_IDS: '32'
+        run: node scan-queue.mjs scan
+      - name: Keep city measurements
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: city-32-measurements
+          path: |
+            source/reports/**/metrics.json
+            source/reports/**/requests.json
+          retention-days: 7
+          if-no-files-found: ignore
+  las-vegas:
+    name: Las Vegas
+    needs: [plan, los-angeles]
+    if: ${{ always() && needs.plan.result == 'success' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    steps:
+      - name: Read public source at this commit
+        shell: bash
+        run: |
+          git init source
+          git -C source remote add origin https://github.com/vibenji/upland-city-hotspots.git
+          git -C source fetch --depth 1 origin "$GITHUB_SHA"
+          git -C source checkout --detach FETCH_HEAD
+      - name: Scan Las Vegas and publish mode lists
+        working-directory: source
+        env:
+          CITY_IDS: '35'
+        run: node scan-queue.mjs scan
+      - name: Keep city measurements
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: city-35-measurements
           path: |
             source/reports/**/metrics.json
             source/reports/**/requests.json
           retention-days: 7
           if-no-files-found: ignore
   remaining-cities:
-    needs: [plan, priority-cities]
+    name: ${{ matrix.name }}
+    needs: [plan, las-vegas]
     if: ${{ always() && needs.plan.result == 'success' }}
     strategy:
       fail-fast: false
       max-parallel: 1
       matrix: ${{ fromJSON(needs.plan.outputs.matrix) }}
     runs-on: ubuntu-24.04
-    timeout-minutes: 350
+    timeout-minutes: 90
     steps:
       - name: Read public source at this commit
         shell: bash
@@ -75,16 +137,16 @@ jobs:
           git -C source remote add origin https://github.com/vibenji/upland-city-hotspots.git
           git -C source fetch --depth 1 origin "$GITHUB_SHA"
           git -C source checkout --detach FETCH_HEAD
-      - name: Scan next six cities sequentially
+      - name: Scan ${{ matrix.name }} and publish mode lists
         working-directory: source
         env:
-          CITY_IDS: ${{ matrix.ids }}
+          CITY_IDS: ${{ matrix.id }}
         run: node scan-queue.mjs scan
-      - name: Keep measurements
+      - name: Keep city measurements
         if: always()
         uses: actions/upload-artifact@v7
         with:
-          name: city-measurements-${{ matrix.batch }}
+          name: city-${{ matrix.id }}-measurements
           path: |
             source/reports/**/metrics.json
             source/reports/**/requests.json
