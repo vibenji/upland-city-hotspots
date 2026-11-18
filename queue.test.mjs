@@ -43,3 +43,15 @@ test('successful completed maps are never rescanned during list recovery',async(
  let rebuilt=false;const failed=await repairCatalog({cities:[{id:'9',complete:true,status:'ready'}]},{scan:()=>{throw Error('Must not scan');},rebuild:async()=>{rebuilt=true;}});
  assert.equal(failed,0);assert.equal(rebuilt,true);
 });
+import {cityMatrix,recoveryCities} from './scan-queue.mjs';
+test('city jobs have one named city each and preserve the supplied priority order',()=>{
+ const cities=orderCities([{city_id:35},{city_id:1},{city_id:32},{city_id:9}], [{id:'1',name:'San Francisco'}]);
+ assert.deepEqual(cityMatrix(cities).include,[{id:'9',name:'Bakersfield'},{id:'32',name:'Los Angeles'},{id:'35',name:'Las Vegas'},{id:'1',name:'San Francisco'}]);
+ assert.equal(new Set(cityMatrix(cities).include.map(c=>c.id)).size,4);
+});
+test('recovery plans one city job for each missing map or list and supports a city-scoped repair',()=>{
+ const index={cities:[{id:'9',name:'Bakersfield',complete:true,rankings:{status:'pending'}},{id:'15',name:'New Orleans',complete:false,status:'failed'},{id:'91',name:'Paris',complete:false,status:'failed'},{id:'117',name:'Madrid',complete:true,rankings:{status:'partial-fees'}},{id:'120',name:'City120',complete:false,status:'scanning'}]};
+ assert.deepEqual(recoveryCities(index).map(c=>c.id),['9','15','91']);
+ assert.deepEqual(recoveryCities(index,['91']).map(c=>c.id),['91']);
+ assert.deepEqual(cityMatrix(recoveryCities({cities:[]})),{include:[]});
+});
