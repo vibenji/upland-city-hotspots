@@ -22,7 +22,8 @@ export function buildRankings(rows,{limit=500,fees={},at=Date.now()}={}){
   return {...p,...(fee!==undefined?{sendFee:fee}:{})};
  });
  const known=candidates.filter(p=>readFee(p.sendFee)!==undefined).length;
- return {schemaVersion:1,provider:'WibenjiTroveHotspots',generatedAt:new Date(at).toISOString(),preselectionOnly:true,personalCooldowns:false,nativeArrivalVerified:false,settings:{plantsPerStructure:50,radiusMetres:60},primaryCount:Math.min(250,limit),reserveCount:Math.max(0,limit-250),candidateCount:candidates.length,feeCoverage:{known,total:candidates.length,complete:known===candidates.length},lists:Object.fromEntries(MODES.map(mode=>[mode,[...candidates].sort((a,b)=>compareRows(a,b,mode)).slice(0,limit).map(p=>({propertyId:p.propertyId,score:p.hotspotScore,...(readFee(p.sendFee)!==undefined?{sendFee:readFee(p.sendFee)}:{feeUnknown:true})}))]))};
+ const count=Math.min(limit,candidates.length);
+ return {schemaVersion:1,provider:'WibenjiTroveHotspots',generatedAt:new Date(at).toISOString(),preselectionOnly:true,personalCooldowns:false,nativeArrivalVerified:false,settings:{plantsPerStructure:50,radiusMetres:60},primaryCount:Math.min(250,count),reserveCount:Math.max(0,count-250),candidateCount:candidates.length,feeCoverage:{known,total:candidates.length,complete:known===candidates.length},lists:Object.fromEntries(MODES.map(mode=>[mode,[...candidates].sort((a,b)=>compareRows(a,b,mode)).slice(0,limit).map(p=>({propertyId:p.propertyId,score:p.hotspotScore,...(readFee(p.sendFee)!==undefined?{sendFee:readFee(p.sendFee)}:{feeUnknown:true})}))]))};
 }
 export async function collectFees(ids,{records={},fetchImpl=fetch,now=Date.now,sleep=ms=>new Promise(r=>setTimeout(r,ms)),maxRequests=1000}={}){
  records=structuredClone(records);let requests=0,failures=0,rateLimits=0,retryAt=0;
@@ -53,10 +54,19 @@ function gh(...args){return execFileSync('gh',[...args,'--repo','vibenji/upland-
 async function previousFees(cityId,dir){
  try{
   const release=JSON.parse(gh('release','view','current-data','--json','assets'));
-  const asset=release.assets.filter(a=>new RegExp('^rankings-'+cityId+'-[0-9]+-[0-9]+\\.json\\.gz$').test(a.name)).sort((a,b)=>b.name.localeCompare(a.name,undefined,{numeric:true}))[0];
+  let selected=null,tag='current-data';
+  if(release.assets.some(a=>a.name==='index.json')){
+   gh('release','download','current-data','--pattern','index.json','--dir',dir,'--clobber');
+   const text=await readFile(join(dir,'index.json'),'utf8'),catalog=JSON.parse(text),record=catalog.cities.find(c=>c.id===cityId),ranking=record?.rankings?.url?record.rankings:record?.previous?.rankings;
+   // Also protects the already-running first-generation worker's publication.
+   if(process.env.GITHUB_ACTIONS==='true'){await writeFile(join(dir,'index-backup.json'),text);gh('release','upload','current-data',join(dir,'index-backup.json'),'--clobber');}
+   if(ranking?.url){const url=new URL(ranking.url),parts=url.pathname.split('/');if(url.hostname!=='github.com'||parts.slice(1,5).join('/')!=='vibenji/upland-city-hotspots/releases/download')throw Error('Unexpected fee cache URL');tag=parts[5];selected={name:parts[6],expectedHash:ranking.compressedSha256};}
+  }
+  const asset=selected??release.assets.filter(a=>new RegExp('^rankings-'+cityId+'-[0-9]+-[0-9]+\\.json\\.gz$').test(a.name)).sort((a,b)=>b.name.localeCompare(a.name,undefined,{numeric:true}))[0];
   if(!asset)return {};
-  gh('release','download','current-data','--pattern',asset.name,'--dir',dir,'--clobber');
-  return JSON.parse(gunzipSync(await readFile(join(dir,asset.name))).toString('utf8')).fees??{};
+  gh('release','download',tag,'--pattern',asset.name,'--dir',dir,'--clobber');
+  const compressed=await readFile(join(dir,asset.name));if(asset.expectedHash&&createHash('sha256').update(compressed).digest('hex')!==asset.expectedHash)throw Error('Fee cache checksum mismatch');
+  return JSON.parse(gunzipSync(compressed).toString('utf8')).fees??{};
  }catch(error){console.error(JSON.stringify({event:'fee-cache-unavailable',error:error.message}));return {};}
 }
 async function main(){
