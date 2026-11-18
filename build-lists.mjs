@@ -25,10 +25,11 @@ export function buildRankings(rows,{limit=500,fees={},at=Date.now()}={}){
  const count=Math.min(limit,candidates.length);
  return {schemaVersion:1,provider:'WibenjiTroveHotspots',generatedAt:new Date(at).toISOString(),preselectionOnly:true,personalCooldowns:false,nativeArrivalVerified:false,settings:{plantsPerStructure:50,radiusMetres:60},primaryCount:Math.min(250,count),reserveCount:Math.max(0,count-250),candidateCount:candidates.length,feeCoverage:{known,total:candidates.length,complete:known===candidates.length},lists:Object.fromEntries(MODES.map(mode=>[mode,[...candidates].sort((a,b)=>compareRows(a,b,mode)).slice(0,limit).map(p=>({propertyId:p.propertyId,score:p.hotspotScore,...(readFee(p.sendFee)!==undefined?{sendFee:readFee(p.sendFee)}:{feeUnknown:true})}))]))};
 }
-export async function collectFees(ids,{records={},fetchImpl=fetch,now=Date.now,sleep=ms=>new Promise(r=>setTimeout(r,ms)),maxRequests=1000}={}){
- records=structuredClone(records);let requests=0,failures=0,rateLimits=0,retryAt=0;
+export async function collectFees(ids,{records={},fetchImpl=fetch,now=Date.now,sleep=ms=>new Promise(r=>setTimeout(r,ms)),maxRequests=1000,budgetMs=600000}={}){
+ records=structuredClone(records);const started=now();let requests=0,failures=0,rateLimits=0,retryAt=0,budgetReached=false;
  for(const id of ids){
   if(records[id]?.at+86400000>now()&&readFee(records[id].fee)!==undefined)continue;
+  if(now()+250-started>=budgetMs){budgetReached=true;break;}
   if(requests>=maxRequests||failures>=6)break;
   await sleep(250);requests++;
   try{
@@ -41,7 +42,7 @@ export async function collectFees(ids,{records={},fetchImpl=fetch,now=Date.now,s
   }catch{failures++;await sleep(Math.min(60000,3000*2**(failures-1)));}
   if(requests%100===0)console.log(JSON.stringify({event:'fees',requests,cached:Object.keys(records).length}));
  }
- return {records,requests,rateLimits,retryAt,consecutiveFailures:failures};
+ return {records,requests,rateLimits,retryAt,consecutiveFailures:failures,budgetReached};
 }
 async function scoringCore(){
  let source=await readFile(process.env.SCAN_SOURCE??'full-city-scan.mjs','utf8');
@@ -82,7 +83,7 @@ async function main(){
  const feeBudget=Number(process.env.FEE_MAX_REQUESTS??1000);if(!Number.isInteger(feeBudget)||feeBudget<0||feeBudget>1000)throw Error('Invalid fee request budget');
  const feeResult=await collectFees(candidates.map(p=>p.propertyId),{records:await previousFees(cityId,dir),maxRequests:feeBudget});
  if(feeResult.retryAt>Date.now())await new Promise(r=>setTimeout(r,feeResult.retryAt-Date.now()));
- const result={...buildRankings(rows,{fees:feeResult.records}),cityId,sourceFetchedAt:city.fetchedAt,fees:feeResult.records,feeRequestBudget:feeBudget,feeRequests:feeResult.requests,feeRateLimits:feeResult.rateLimits,feeRetryAt:feeResult.retryAt,feeScope:'highest-coverage-1000-candidates',fullDatasetRequiredForStarredSearch:true};
+ const result={...buildRankings(rows,{fees:feeResult.records}),cityId,sourceFetchedAt:city.fetchedAt,fees:feeResult.records,feeRequestBudget:feeBudget,feeTimeBudgetMs:600000,feeBudgetReached:feeResult.budgetReached,feeRequests:feeResult.requests,feeRateLimits:feeResult.rateLimits,feeRetryAt:feeResult.retryAt,feeScope:'highest-coverage-1000-candidates',fullDatasetRequiredForStarredSearch:true};
  const stamp=(process.env.GITHUB_RUN_ID??Date.now())+'-'+(process.env.GITHUB_RUN_ATTEMPT??'1'),assetName='rankings-'+cityId+'-'+stamp+'.json.gz';
  const raw=Buffer.from(JSON.stringify(result)),compressed=gzipSync(raw,{level:6});await writeFile(join(dir,assetName),compressed);
  const manifest={status:result.feeCoverage.complete?'ready':'partial-fees',assetName,encoding:'gzip',bytes:compressed.length,sha256:createHash('sha256').update(raw).digest('hex'),compressedSha256:createHash('sha256').update(compressed).digest('hex'),feeCoverage:result.feeCoverage,feeScope:result.feeScope,modes:MODES,primaryCount:result.primaryCount,reserveCount:result.reserveCount,preselectionOnly:true};
