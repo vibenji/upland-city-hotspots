@@ -37,7 +37,7 @@ jobs:
     needs: [plan]
     if: ${{ always() && needs.plan.result == 'success' }}
     runs-on: ubuntu-24.04
-    timeout-minutes: 90
+    timeout-minutes: 350
     steps:
       - name: Read public source at this commit
         shell: bash
@@ -66,7 +66,7 @@ jobs:
     needs: [plan, bakersfield]
     if: ${{ always() && needs.plan.result == 'success' }}
     runs-on: ubuntu-24.04
-    timeout-minutes: 90
+    timeout-minutes: 350
     steps:
       - name: Read public source at this commit
         shell: bash
@@ -95,7 +95,7 @@ jobs:
     needs: [plan, los-angeles]
     if: ${{ always() && needs.plan.result == 'success' }}
     runs-on: ubuntu-24.04
-    timeout-minutes: 90
+    timeout-minutes: 350
     steps:
       - name: Read public source at this commit
         shell: bash
@@ -128,7 +128,7 @@ jobs:
       max-parallel: 1
       matrix: ${{ fromJSON(needs.plan.outputs.matrix) }}
     runs-on: ubuntu-24.04
-    timeout-minutes: 90
+    timeout-minutes: 350
     steps:
       - name: Read public source at this commit
         shell: bash
@@ -152,3 +152,28 @@ jobs:
             source/reports/**/requests.json
           retention-days: 7
           if-no-files-found: ignore
+  report:
+    name: Verify all cities and publish report
+    needs: [plan, bakersfield, los-angeles, las-vegas, remaining-cities]
+    if: ${{ always() && needs.plan.result == 'success' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - name: Read public source at this commit
+        shell: bash
+        run: |
+          git init source
+          git -C source remote add origin https://github.com/vibenji/upland-city-hotspots.git
+          git -C source fetch --depth 1 origin "$GITHUB_SHA"
+          git -C source checkout --detach FETCH_HEAD
+      - name: Verify published map/list hashes and every candidate fee
+        working-directory: source
+        run: node status-report.mjs
+      - name: Keep machine and human readable verification reports
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: city-verification-report
+          path: source/reports/audit/status-report.*
+          retention-days: 7
+          if-no-files-found: warn
