@@ -13,8 +13,11 @@ export function orderCities(rows,names=[]){
  return [...priority.filter(id=>ids.includes(id)),...ids.filter(id=>!priority.includes(id)).sort((a,b)=>Number(a)-Number(b))].map(id=>({id,name:labels.get(id)??({'9':'Bakersfield','32':'Los Angeles','35':'Las Vegas'}[id])??'City '+id}));
 }
 export const cityMatrix=cities=>({include:cities.map(({id,name})=>({id,name}))});
+export function needsFeeRefresh(city,at=Date.now()){
+ const r=city.rankings;return city.complete&&(!r?.url||r.feeScope!=='all-candidates'||r.feeCoverage?.complete!==true||!(r.feeFreshUntil>at));
+}
 export function recoveryCities(index,ids=null){
- return index.cities.filter(c=>(!ids||ids.includes(c.id))&&((!c.complete&&c.status==='failed')||(c.complete&&c.rankings?.status==='pending')));
+ return index.cities.filter(c=>(!ids||ids.includes(c.id))&&((!c.complete&&c.status==='failed')||needsFeeRefresh(c)));
 }
 export function mergeIndex(old,record){
  const next=structuredClone(old??{schemaVersion:1,cities:[]});next.cities??=[];
@@ -87,15 +90,10 @@ async function scanCity(city){
   const record={id:city.id,name:city.name,complete:true,status:'ready',fetchedAt:metrics.finishedAt,parcels:metrics.scan.parcels,sourceProperties:metrics.scan.properties,plants:metrics.scan.plants,structures:metrics.scan.structures,scanMs:metrics.scanMs,requests:metrics.httpRequests,rateLimits:metrics.rateLimits,dataset:{url:assetUrl(name,dataTag),encoding:'gzip',bytes:compressed.length,decodedBytes:raw.length,sha256:metrics.exportSha256,compressedSha256:createHash('sha256').update(compressed).digest('hex'),allParcels:true},metricsUrl:assetUrl(metricsName,dataTag),rankings:{status:'pending'}};
   await updateIndex(record,dir);
   console.log(JSON.stringify({event:'city-published',id:city.id,parcels:record.parcels,dataset:record.dataset.url}));
-  // The first all-city run can adopt the processor being completed in parallel.
-  // Only this repository owner's public main branch is used; its hash is logged.
+  // Run the processor and its fee/checkpoint modules from the same checked-out commit.
   if(process.env.LIVE_PROCESSOR==='true'){
-   try{const response=await fetch('https://raw.githubusercontent.com/'+REPO+'/main/build-lists.mjs',{signal:AbortSignal.timeout(30000)});
-   if(response.ok){const code=await response.text(),processor=join(dir,'build-lists.mjs');console.log(JSON.stringify({event:'processor-source',sha256:createHash('sha256').update(code).digest('hex')}));await writeFile(processor,code);
-    try{await runNode(processor,{CITY_ID:city.id,CITY_DATA_FILE:join(dir,'city-'+city.id+'.json'),OUTPUT_DIR:dir,SCAN_SOURCE:resolve('full-city-scan.mjs'),RECORD_FILE:join(dir,'record.json')});
-     const rankings=JSON.parse(await readFile(join(dir,'rankings-manifest.json'),'utf8'));await upload([join(dir,rankings.assetName)],dataTag);record.rankings={...rankings,url:assetUrl(rankings.assetName,dataTag)};await updateIndex(record,dir);
-    }catch(error){console.error(JSON.stringify({event:'rankings-pending',id:city.id,error:error.message}));}
-   }else if(response.status!==404)console.error('Processor unavailable: HTTP '+response.status);
+   try{await runNode(resolve('build-lists.mjs'),{CITY_ID:city.id,CITY_DATA_FILE:join(dir,'city-'+city.id+'.json'),OUTPUT_DIR:dir,SCAN_SOURCE:resolve('full-city-scan.mjs')});
+    const rankings=JSON.parse(await readFile(join(dir,'rankings-manifest.json'),'utf8'));await upload([join(dir,rankings.assetName)],dataTag);record.rankings={...rankings,url:assetUrl(rankings.assetName,dataTag)};await updateIndex(record,dir);
    }catch(error){console.error(JSON.stringify({event:'rankings-pending',id:city.id,error:error.message}));}
   }
   if(process.env.GITHUB_STEP_SUMMARY)await appendFile(process.env.GITHUB_STEP_SUMMARY,'\n- '+city.name+': '+record.parcels+' parcels, '+Math.round(metrics.elapsedMs/1000)+' seconds, '+metrics.httpRequests+' requests, '+metrics.rateLimits+' rate limits. [Full data]('+record.dataset.url+')\n');
@@ -106,7 +104,7 @@ async function scanCity(city){
 async function rebuild(ids=null){
  const dir=resolve('reports/rebuild');await mkdir(dir,{recursive:true});
  const index=await catalog(dir);let failed=0;
- for(const record of index.cities.filter(c=>c.complete&&c.rankings?.status==='pending'&&(!ids||ids.includes(c.id)))){
+ for(const record of index.cities.filter(c=>needsFeeRefresh(c)&&(!ids||ids.includes(c.id)))){
   try{
    const url=new URL(record.dataset.url),parts=url.pathname.split('/');
    if(url.hostname!=='github.com'||parts.slice(1,5).join('/')!==REPO+'/releases/download')throw Error('Unexpected dataset URL');
