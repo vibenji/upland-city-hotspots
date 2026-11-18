@@ -1,0 +1,366 @@
+[
+  {
+    "id": "32",
+    "name": "Los Angeles"
+  },
+  {
+    "id": "133",
+    "name": "Cape Town"
+  },
+  {
+    "id": "134",
+    "name": "Cape Town Airport"
+  },
+  {
+    "id": "109",
+    "name": "Albuquerque"
+  },
+  {
+    "id": "108",
+    "name": "Amarillo"
+  },
+  {
+    "id": "42",
+    "name": "Arlington"
+  },
+  {
+    "id": "9",
+    "name": "Bakersfield"
+  },
+  {
+    "id": "10",
+    "name": "Chicago"
+  },
+  {
+    "id": "11",
+    "name": "Cleveland"
+  },
+  {
+    "id": "40",
+    "name": "Dallas"
+  },
+  {
+    "id": "41",
+    "name": "Dallas Airport"
+  },
+  {
+    "id": "96",
+    "name": "Hayward Executive Airport"
+  },
+  {
+    "id": "29",
+    "name": "Bronx"
+  },
+  {
+    "id": "6",
+    "name": "Brooklyn"
+  },
+  {
+    "id": "101",
+    "name": "Lubbuck"
+  },
+  {
+    "id": "87",
+    "name": "Miami Beach"
+  },
+  {
+    "id": "95",
+    "name": "Trenton–Robbinsville Airport"
+  },
+  {
+    "id": "90",
+    "name": "BHX"
+  },
+  {
+    "id": "61",
+    "name": "Birmingham"
+  },
+  {
+    "id": "38",
+    "name": "Lisbon"
+  },
+  {
+    "id": "63",
+    "name": "Berlin"
+  },
+  {
+    "id": "64",
+    "name": "Berlin Airport"
+  },
+  {
+    "id": "110",
+    "name": "Cortez"
+  },
+  {
+    "id": "94",
+    "name": "Frederick"
+  },
+  {
+    "id": "98",
+    "name": "Jacksonville"
+  },
+  {
+    "id": "14",
+    "name": "Kansas City"
+  },
+  {
+    "id": "106",
+    "name": "Little Rock"
+  },
+  {
+    "id": "33",
+    "name": "Detroit"
+  },
+  {
+    "id": "86",
+    "name": "Dulles"
+  },
+  {
+    "id": "7",
+    "name": "Oakland"
+  },
+  {
+    "id": "13",
+    "name": "Rutherford"
+  },
+  {
+    "id": "8",
+    "name": "Staten Island"
+  },
+  {
+    "id": "59",
+    "name": "London"
+  },
+  {
+    "id": "5",
+    "name": "Fresno"
+  },
+  {
+    "id": "1",
+    "name": "San Francisco"
+  },
+  {
+    "id": "100",
+    "name": "Santa Fe"
+  },
+  {
+    "id": "137",
+    "name": "Florence"
+  },
+  {
+    "id": "35",
+    "name": "Las Vegas"
+  },
+  {
+    "id": "97",
+    "name": "Montgomery"
+  },
+  {
+    "id": "85",
+    "name": "Washington"
+  },
+  {
+    "id": "88",
+    "name": "Slough"
+  },
+  {
+    "id": "120",
+    "name": "Singapore"
+  },
+  {
+    "id": "121",
+    "name": "Singapore Airport"
+  },
+  {
+    "id": "113",
+    "name": "Hong Kong"
+  },
+  {
+    "id": "114",
+    "name": "Hong Kong Airport"
+  },
+  {
+    "id": "3",
+    "name": "Manhattan"
+  },
+  {
+    "id": "105",
+    "name": "Memphis"
+  },
+  {
+    "id": "16",
+    "name": "Nashville"
+  },
+  {
+    "id": "107",
+    "name": "Oklahoma"
+  },
+  {
+    "id": "138",
+    "name": "Omaha"
+  },
+  {
+    "id": "99",
+    "name": "Phoenix"
+  },
+  {
+    "id": "72",
+    "name": "South Lake Tahoe"
+  },
+  {
+    "id": "36",
+    "name": "Rio de Janeiro"
+  },
+  {
+    "id": "102",
+    "name": "Park City"
+  },
+  {
+    "id": "103",
+    "name": "Salt Lake City"
+  },
+  {
+    "id": "70",
+    "name": "Miami"
+  },
+  {
+    "id": "104",
+    "name": "Monroe"
+  },
+  {
+    "id": "117",
+    "name": "Madrid"
+  },
+  {
+    "id": "118",
+    "name": "Madrid Airport"
+  },
+  {
+    "id": "126",
+    "name": "Seattle Airport"
+  },
+  {
+    "id": "60",
+    "name": "Heathrow Airport"
+  },
+  {
+    "id": "4",
+    "name": "Queens"
+  },
+  {
+    "id": "43",
+    "name": "Lusail"
+  },
+  {
+    "id": "69",
+    "name": "Sakura"
+  },
+  {
+    "id": "122",
+    "name": "Vancouver"
+  },
+  {
+    "id": "123",
+    "name": "Vancouver Airport"
+  },
+  {
+    "id": "15",
+    "name": "New Orleans"
+  },
+  {
+    "id": "62",
+    "name": "London City Hall"
+  },
+  {
+    "id": "66",
+    "name": "Tokyo"
+  },
+  {
+    "id": "67",
+    "name": "Tokyo Airport"
+  },
+  {
+    "id": "111",
+    "name": "Sydney"
+  },
+  {
+    "id": "112",
+    "name": "Sydney Airport"
+  },
+  {
+    "id": "141",
+    "name": "Amsterdam"
+  },
+  {
+    "id": "142",
+    "name": "Amsterdam Airport"
+  },
+  {
+    "id": "12",
+    "name": "Santa Clara"
+  },
+  {
+    "id": "91",
+    "name": "Paris"
+  },
+  {
+    "id": "93",
+    "name": "Paris Airport"
+  },
+  {
+    "id": "139",
+    "name": "Takasaki"
+  },
+  {
+    "id": "48",
+    "name": "Sao Paulo"
+  },
+  {
+    "id": "52",
+    "name": "Sao Paulo Airport"
+  },
+  {
+    "id": "116",
+    "name": "Rome Airport"
+  },
+  {
+    "id": "125",
+    "name": "Seattle"
+  },
+  {
+    "id": "82",
+    "name": "Bermuda"
+  },
+  {
+    "id": "50",
+    "name": "Bueno Aires Airport"
+  },
+  {
+    "id": "51",
+    "name": "Buenos Aires"
+  },
+  {
+    "id": "92",
+    "name": "Saint Denis"
+  },
+  {
+    "id": "47",
+    "name": "Doha"
+  },
+  {
+    "id": "37",
+    "name": "Porto"
+  },
+  {
+    "id": "44",
+    "name": "Trenton"
+  },
+  {
+    "id": "115",
+    "name": "Rome"
+  },
+  {
+    "id": "46",
+    "name": "Stockton"
+  }
+]
