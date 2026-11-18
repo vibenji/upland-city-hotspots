@@ -1,0 +1,31 @@
+name: Backfill missing hotspot lists
+on:
+  workflow_dispatch:
+  workflow_run:
+    workflows: ['Daily ordered city scans']
+    types: [completed]
+permissions:
+  contents: write
+concurrency:
+  group: daily-city-scan-service
+  cancel-in-progress: false
+jobs:
+  rebuild:
+    if: ${{ github.event_name == 'workflow_dispatch' || github.event.workflow_run.head_branch == 'main' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 350
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - name: Read public source at this commit
+        shell: bash
+        run: |
+          git init source
+          git -C source remote add origin https://github.com/vibenji/upland-city-hotspots.git
+          git -C source fetch --depth 1 origin "$GITHUB_SHA"
+          git -C source checkout --detach FETCH_HEAD
+      - name: Verify publication and ranking policy
+        run: node --test source/*.test.mjs
+      - name: Rebuild pending city lists without rescanning maps
+        working-directory: source
+        run: node scan-queue.mjs rebuild
