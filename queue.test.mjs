@@ -51,7 +51,13 @@ test('city jobs have one named city each and preserve the supplied priority orde
 });
 test('recovery plans one city job for each missing map or list and supports a city-scoped repair',()=>{
  const index={cities:[{id:'9',name:'Bakersfield',complete:true,rankings:{status:'pending'}},{id:'15',name:'New Orleans',complete:false,status:'failed'},{id:'91',name:'Paris',complete:false,status:'failed'},{id:'117',name:'Madrid',complete:true,rankings:{status:'partial-fees'}},{id:'120',name:'City120',complete:false,status:'scanning'}]};
- assert.deepEqual(recoveryCities(index).map(c=>c.id),['9','15','91']);
+ assert.deepEqual(recoveryCities(index).map(c=>c.id),['9','15','91','117']);
  assert.deepEqual(recoveryCities(index,['91']).map(c=>c.id),['91']);
  assert.deepEqual(cityMatrix(recoveryCities({cities:[]})),{include:[]});
+});
+
+test('recovery includes partial, expired and legacy-scope fee data, but skips fresh complete all-candidate fees',()=>{
+ const now=Date.now(),base={complete:true,status:'ready'};
+ const index={cities:[{...base,id:'1',rankings:{status:'partial-fees',feeScope:'all-candidates'}},{...base,id:'2',rankings:{status:'ready',feeScope:'all-candidates',feeCoverage:{complete:true},feeFreshUntil:now-1}},{...base,id:'3',rankings:{status:'ready',feeScope:'highest-coverage-1000-candidates',feeCoverage:{complete:true},feeFreshUntil:now+10000}},{...base,id:'4',rankings:{url:'current',status:'ready',feeScope:'all-candidates',feeCoverage:{complete:true},feeFreshUntil:now+10000}}]};
+ assert.deepEqual(recoveryCities(index).map(c=>c.id),['1','2','3']);
 });
