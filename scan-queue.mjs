@@ -5,6 +5,7 @@ import {gzipSync} from 'node:zlib';
 import {createHash} from 'node:crypto';
 import {resolve,join} from 'node:path';
 import {pathToFileURL} from 'node:url';
+import {waitForFeeRetry} from './build-lists.mjs';
 const REPO='vibenji/upland-city-hotspots',TAG='current-data';
 const priority=['9','32','35'];
 export function orderCities(rows,names=[]){
@@ -104,7 +105,7 @@ async function scanCity(city){
 async function rebuild(ids=null){
  const dir=resolve('reports/rebuild');await mkdir(dir,{recursive:true});
  const index=await catalog(dir);let failed=0;
- const resumeAt=Math.max(0,...index.cities.map(c=>c.rankings?.feeRetryAt??0));if(resumeAt>Date.now()){console.log(JSON.stringify({event:'respect-server-retry-after',resumeAt}));await new Promise(r=>setTimeout(r,resumeAt-Date.now()));}
+ const sharedThrottle=await readAsset('fee-throttle.json',join(dir,'throttle'));await waitForFeeRetry(index,{externalRetryAt:sharedThrottle?JSON.parse(sharedThrottle).retryAt:0});
  for(const record of index.cities.filter(c=>needsFeeRefresh(c)&&(!ids||ids.includes(c.id)))){
   try{
    const url=new URL(record.dataset.url),parts=url.pathname.split('/');
