@@ -1,9 +1,9 @@
 # Fast basis fee rollout — 19 November 2026
 
 The first full fee run was cancelled at the owner's request. Full city maps, completed fee publications and two-slot checkpoints are retained.
-The basis processor queries only missing fees among the top 500 coverage targets plus at most one nearest eligible landing within 20m for each leading 250 target (at most 750 IDs). It never reduces the complete city map or limits Starred Troves source searches. Three lists still use all scored rows and all saved fee evidence; unknown fees remain marked.
+The basis processor queries only missing fees among the top 500 coverage targets plus at most one nearest eligible landing within 40m for each leading 250 target (at most 750 IDs). It never reduces the complete city map or limits Starred Troves source searches. Three lists still use all scored rows and all saved fee evidence; unknown fees remain marked.
 Existing verified fees are reused regardless of age. Freshness metadata for all candidates remains separate from `basisCoverage`; `basis-ready` is not a claim of globally cheapest landings or complete fresh fees for every candidate.
-Each new basis run measures 24 public property reads at each of three bounded rates on its GitHub runner and selects the fastest successful profile. Rolling workers replace the previous fixed batches; 429/503 responses stop new work and preserve checkpoints. The next job honors Retry-After. Cities publish separately under one publication writer.
+Each new basis run measures two rounds of 64 public property reads at each of three bounded rates (16 workers/25ms, 24/15ms and 32/10ms) on its GitHub runner and selects the fastest profile that succeeds in both rounds, scored by its slower round. Rolling workers replace the previous fixed batches; 429/503 responses stop new work and preserve checkpoints. The next job honors Retry-After. Cities publish separately under one publication writer.
 `basis-status.json` and `basis-status.md` summarize publication metadata and basis readiness. The previous independent full-payload/freshness audit remains a different report.
 
 ---
