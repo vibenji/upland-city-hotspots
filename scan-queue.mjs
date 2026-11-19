@@ -14,7 +14,7 @@ export function orderCities(rows,names=[]){
 }
 export const cityMatrix=cities=>({include:cities.map(({id,name})=>({id,name}))});
 export function needsFeeRefresh(city,at=Date.now()){
- const r=city.rankings;return city.complete&&(!r?.url||r.feeScope!=='all-candidates'||r.feeCoverage?.complete!==true||!(r.feeFreshUntil>at));
+ const r=city.rankings;return city.complete&&(!r?.url||!(r.feeCoverage?.complete===true||r.feeScope==='basis-500-nearest-1'&&r.basisVersion===1&&r.basisCoverage?.complete===true));
 }
 export function recoveryCities(index,ids=null){
  return index.cities.filter(c=>(!ids||ids.includes(c.id))&&((!c.complete&&c.status==='failed')||needsFeeRefresh(c)));
@@ -104,6 +104,7 @@ async function scanCity(city){
 async function rebuild(ids=null){
  const dir=resolve('reports/rebuild');await mkdir(dir,{recursive:true});
  const index=await catalog(dir);let failed=0;
+ const resumeAt=Math.max(0,...index.cities.map(c=>c.rankings?.feeRetryAt??0));if(resumeAt>Date.now()){console.log(JSON.stringify({event:'respect-server-retry-after',resumeAt}));await new Promise(r=>setTimeout(r,resumeAt-Date.now()));}
  for(const record of index.cities.filter(c=>needsFeeRefresh(c)&&(!ids||ids.includes(c.id)))){
   try{
    const url=new URL(record.dataset.url),parts=url.pathname.split('/');
