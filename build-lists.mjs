@@ -18,15 +18,53 @@ export function compareRows(a,b,mode){
  }
  return order||bs-as||known||(af!==undefined&&bf!==undefined?af-bf:0)||(a.hotspotDistance??0)-(b.hotspotDistance??0)||a.propertyId.localeCompare(b.propertyId);
 }
-export function buildRankings(rows,{limit=500,fees={},at=Date.now()}={}){
+export function buildRankings(rows,{limit=500,fees={},at=Date.now(),retainFees=false}={}){
  const candidates=rows.filter(p=>p.sendable!==false&&p.hotspotScore>0).map(p=>{
-  const cached=fees[p.propertyId],fee=cached?(cached.at+DAY>at?readFee(cached.fee):undefined):readFee(p.sendFee);
+  const cached=fees[p.propertyId],fee=cached?(retainFees||cached.at+DAY>at?readFee(cached.fee):undefined):readFee(p.sendFee);
   return {...p,sendFee:fee};
  });
  const known=candidates.filter(p=>readFee(p.sendFee)!==undefined).length;
  const count=Math.min(limit,candidates.length);
  return {schemaVersion:1,provider:'WibenjiTroveHotspots',generatedAt:new Date(at).toISOString(),preselectionOnly:true,personalCooldowns:false,nativeArrivalVerified:false,settings:{plantsPerStructure:50,radiusMetres:60},primaryCount:Math.min(250,count),reserveCount:Math.max(0,count-250),candidateCount:candidates.length,feeCoverage:feeCoverage(candidates.map(p=>p.propertyId),Object.fromEntries(candidates.map(p=>[p.propertyId,readFee(p.sendFee)!==undefined?{fee:readFee(p.sendFee),at:fees[p.propertyId]?.at??at}:fees[p.propertyId]])),at),lists:Object.fromEntries(MODES.map(mode=>[mode,[...candidates].sort((a,b)=>compareRows(a,b,mode)).slice(0,limit).map(p=>({propertyId:p.propertyId,score:p.hotspotScore,...(readFee(p.sendFee)!==undefined?{sendFee:readFee(p.sendFee)}:{feeUnknown:true})}))]))};
 }
+
+// Fee requests are limited; the full city and scored candidate set remain intact.
+export function selectBasis(rows){
+ const sorted=rows.filter(p=>p.sendable!==false&&p.hotspotScore>0).sort((a,b)=>compareRows(a,b,'maximum-coverage'));
+ const chosen=new Map(sorted.slice(0,500).map(p=>[p.propertyId,p]));
+ const cos=Math.max(.05,Math.cos((sorted[0]?.lat??0)*Math.PI/180)),cell=20,grid=new Map();
+ const point=p=>[p.lng*111320*cos,p.lat*111320];
+ for(const p of sorted){if(!Number.isFinite(p.lat)||!Number.isFinite(p.lng))continue;const [x,y]=point(p),key=Math.floor(x/cell)+','+Math.floor(y/cell);if(!grid.has(key))grid.set(key,[]);grid.get(key).push(p);}
+ for(const p of sorted.slice(0,250)){
+  if(!Number.isFinite(p.lat)||!Number.isFinite(p.lng))continue;
+  const [x,y]=point(p),gx=Math.floor(x/cell),gy=Math.floor(y/cell);let nearest=null,best=cell*cell;
+  for(let dx=-1;dx<=1;dx++)for(let dy=-1;dy<=1;dy++)for(const n of grid.get((gx+dx)+','+(gy+dy))??[]){if(n.propertyId===p.propertyId)continue;const [nx,ny]=point(n),distance=(nx-x)**2+(ny-y)**2;if(distance<best||distance===best&&n.propertyId<(nearest?.propertyId??'~')){nearest=n;best=distance;}}
+  if(nearest)chosen.set(nearest.propertyId,nearest);
+ }
+ return [...chosen.values()];
+}
+const validKnown=(r,at)=>r&&typeof r.fee==='number'&&readFee(r.fee)!==undefined&&Number.isFinite(r.at)&&r.at>=0&&r.at<=at+2000;
+export async function collectBasisFees(ids,{records={},fetchImpl=fetch,now=Date.now,sleep=ms=>new Promise(r=>setTimeout(r,ms)),concurrency=8,intervalMs=50,budgetMs=300000,maxRequests=1000,onCheckpoint=async()=>{},checkpointEvery=100}={}){
+ if(!Number.isInteger(concurrency)||concurrency<1||concurrency>16||!Number.isFinite(intervalMs)||intervalMs<10&&intervalMs!==1)throw Error('Invalid measured throughput profile');
+ records=Object.fromEntries(Object.entries(records).filter(([id,r])=>/^[1-9]\d{0,15}$/.test(id)&&validKnown(r,now())).map(([id,r])=>[id,{...r}]));
+ const queue=[...new Set(ids)].filter(id=>!validKnown(records[id],now())),started=now();let cursor=0,requests=0,rateLimits=0,retryAt=0,stopped=false,pacing=Promise.resolve(),lastCheckpoint=0,checkpointTail=Promise.resolve();const errors={};
+ const coverage=()=>{const known=ids.filter(id=>validKnown(records[id],now())).length;return {known,recorded:known,total:ids.length,missing:ids.length-known,stale:0,complete:known===ids.length,retained:true};};
+ const progress=()=>({requests,rateLimits,retryAt,coverage:coverage(),errors:{...errors},budgetReached:now()-started>=budgetMs||requests>=maxRequests&&cursor<queue.length});
+ const checkpoint=()=>{checkpointTail=checkpointTail.then(()=>onCheckpoint(structuredClone(records),progress()));return checkpointTail;};
+ const pace=()=>{const next=pacing.then(async()=>{if(stopped||now()-started>=budgetMs||requests>=maxRequests)return false;await sleep(intervalMs);if(stopped||now()-started>=budgetMs||requests>=maxRequests)return false;requests++;return true;});pacing=next.catch(()=>{});return next;};
+ const workers=Array.from({length:Math.min(concurrency,queue.length)},async()=>{
+  while(!stopped&&cursor<queue.length){const id=queue[cursor++];if(!await pace())break;
+   try{const response=await fetchImpl('https://api.prod.upland.me/api/properties/'+id,{headers:{accept:'application/json'},credentials:'omit',redirect:'error',signal:AbortSignal.timeout(15000)});
+    if(response.status===429||response.status===503){const after=response.headers?.get('Retry-After'),seconds=Number(after),wait=after?(Number.isFinite(seconds)?seconds*1000:Date.parse(after)-now()):60000;retryAt=Math.max(retryAt,now()+Math.max(1000,Number.isFinite(wait)?wait:60000));rateLimits+=Number(response.status===429);stopped=true;errors[id]='HTTP '+response.status;continue;}
+    if(!response.ok)throw Error('Property HTTP '+response.status);const body=await response.json(),fee=readFee(body.teleport_price);if(String(body.prop_id)!==id||fee===undefined)throw Error('Unverified fee');records[id]={fee,at:now()};
+   }catch(error){errors[id]=String(error.message).slice(0,160);if(Object.keys(errors).length>=6)stopped=true;}
+   if(requests-lastCheckpoint>=checkpointEvery){lastCheckpoint=requests;try{await checkpoint();}catch(error){stopped=true;throw error;}}
+  }
+ });
+ const settled=await Promise.allSettled(workers);const failure=settled.find(r=>r.status==='rejected');if(failure)throw failure.reason;
+ await checkpoint();return {records,...progress()};
+}
+
 export async function scoringCore(){
  let source=await readFile(process.env.SCAN_SOURCE??'full-city-scan.mjs','utf8');
  const marker='const {createCityMapScan}=scanModule;const {createCityMapJournal}=journalModule;';
@@ -63,8 +101,8 @@ async function main(){
  if(!city.complete||city.cityId!==cityId||!Array.isArray(city.properties))throw Error('Only complete matching city datasets can be processed');
  const {scoreCity}=await scoringCore();
  const rows=scoreCity(city.properties).filter(p=>p.sendable!==false&&p.hotspotScore>0);
- const candidates=[...rows].sort((a,b)=>compareRows(a,b,'maximum-coverage'));
- const feeBudget=Number(process.env.FEE_MAX_REQUESTS??1000000),budgetMs=Number(process.env.FEE_TIME_BUDGET_MS??16200000);
+ const candidates=[...rows].sort((a,b)=>compareRows(a,b,'maximum-coverage')),basis=selectBasis(rows);
+ const feeBudget=Number(process.env.FEE_MAX_REQUESTS??1000),budgetMs=Number(process.env.FEE_TIME_BUDGET_MS??300000);
  if(!Number.isInteger(feeBudget)||feeBudget<0||feeBudget>1000000||!Number.isFinite(budgetMs)||budgetMs<1||budgetMs>17400000)throw Error('Invalid fee request/time budget');
  const release=JSON.parse(gh('release','view','current-data','--json','assets'));const names=new Set(release.assets.map(a=>a.name));
  const checkpoint=createFeeCacheStore(cityId,{
@@ -74,13 +112,13 @@ async function main(){
  const legacy=await previousFees(cityId,dir),cached=await checkpoint.load();
  const records={...legacy};for(const [id,r]of Object.entries(cached))if(!records[id]||r.at>records[id].at)records[id]=r;
  const sourceAt=Date.parse(city.fetchedAt);for(const row of candidates)if(readFee(row.sendFee)!==undefined&&Number.isFinite(sourceAt)&&(!records[row.propertyId]||sourceAt>records[row.propertyId].at))records[row.propertyId]={fee:readFee(row.sendFee),at:sourceAt};
- const feeResult=await collectFees(candidates.map(p=>p.propertyId),{records,maxRequests:feeBudget,budgetMs,concurrency:4,intervalMs:100,retryRateLimits:true,retryErrors:true,
+ const feeResult=await collectBasisFees(basis.map(p=>p.propertyId),{records,maxRequests:feeBudget,budgetMs,concurrency:Number(process.env.FEE_CONCURRENCY??8),intervalMs:Number(process.env.FEE_INTERVAL_MS??50),
   onCheckpoint:(records,progress)=>logFeeCheckpoint({cityId,records,progress,checkpoint})
  });
- const result={...buildRankings(rows,{fees:feeResult.records}),cityId,sourceFetchedAt:city.fetchedAt,fees:feeResult.records,feeRequestBudget:feeBudget,feeTimeBudgetMs:budgetMs,feeBudgetReached:feeResult.budgetReached,feeRequests:feeResult.requests,feeRateLimits:feeResult.rateLimits,feeRetryAt:feeResult.retryAt,feeErrors:feeResult.errors,feeScope:'all-candidates',fullDatasetRequiredForStarredSearch:true};
+ const result={...buildRankings(rows,{fees:feeResult.records,retainFees:true}),cityId,sourceFetchedAt:city.fetchedAt,fees:feeResult.records,feeRequestBudget:feeBudget,feeTimeBudgetMs:budgetMs,feeBudgetReached:feeResult.budgetReached,feeRequests:feeResult.requests,feeRateLimits:feeResult.rateLimits,feeRetryAt:feeResult.retryAt,feeErrors:feeResult.errors,feeScope:'basis-500-nearest-1',basisVersion:1,basisIds:basis.map(p=>p.propertyId),basisCoverage:feeResult.coverage,feeRetention:'until-refreshed',fullDatasetRequiredForStarredSearch:true};
  const stamp=(process.env.GITHUB_RUN_ID??Date.now())+'-'+(process.env.GITHUB_RUN_ATTEMPT??'1'),assetName='rankings-'+cityId+'-'+stamp+'.json.gz';
  const raw=Buffer.from(JSON.stringify(result)),compressed=gzipSync(raw,{level:6});await writeFile(join(dir,assetName),compressed);
- const manifest={status:result.feeCoverage.complete?'ready':'partial-fees',assetName,encoding:'gzip',bytes:compressed.length,sha256:createHash('sha256').update(raw).digest('hex'),compressedSha256:createHash('sha256').update(compressed).digest('hex'),generatedAt:result.generatedAt,feeFreshUntil:candidates.length?Object.values(feeResult.records).reduce((min,r)=>Math.min(min,r.at+DAY),Date.now()+DAY):Date.now()+DAY,feeCoverage:result.feeCoverage,feeScope:result.feeScope,feeBudgetReached:result.feeBudgetReached,feeRetryAt:result.feeRetryAt,feeErrors:Object.keys(result.feeErrors).length,modes:MODES,primaryCount:result.primaryCount,reserveCount:result.reserveCount,preselectionOnly:true};
+ const manifest={status:result.feeCoverage.complete?'ready':result.basisCoverage.complete?'basis-ready':'partial-fees',assetName,encoding:'gzip',bytes:compressed.length,sha256:createHash('sha256').update(raw).digest('hex'),compressedSha256:createHash('sha256').update(compressed).digest('hex'),generatedAt:result.generatedAt,feeFreshUntil:candidates.length?Object.values(feeResult.records).reduce((min,r)=>Math.min(min,r.at+DAY),Date.now()+DAY):Date.now()+DAY,feeCoverage:result.feeCoverage,feeScope:result.feeScope,basisVersion:result.basisVersion,basisCoverage:result.basisCoverage,feeRetention:result.feeRetention,feeBudgetReached:result.feeBudgetReached,feeRetryAt:result.feeRetryAt,feeErrors:Object.keys(result.feeErrors).length,modes:MODES,primaryCount:result.primaryCount,reserveCount:result.reserveCount,preselectionOnly:true};
  await writeFile(join(dir,'rankings-manifest.json'),JSON.stringify(manifest,null,2));console.log(JSON.stringify({event:'rankings-ready',cityId,...manifest}));
 }
 if(process.argv[1]&&import.meta.url===pathToFileURL(resolve(process.argv[1])).href)main().catch(error=>{console.error(error.message);process.exitCode=1;});
