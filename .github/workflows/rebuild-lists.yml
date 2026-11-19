@@ -41,7 +41,7 @@ jobs:
         id: recovery
         working-directory: source
         run: node scan-queue.mjs recovery-plan
-      - name: Measure three bounded request rates on this runner
+      - name: Measure higher request rates twice on this runner
         id: measure
         working-directory: source
         run: node measure-fees.mjs
