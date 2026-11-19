@@ -29,10 +29,13 @@ export function buildRankings(rows,{limit=500,fees={},at=Date.now(),retainFees=f
 }
 
 // Fee requests are limited; the full city and scored candidate set remain intact.
-export function selectBasis(rows){
+export const BASIS_VERSION=2;
+export const BASIS_RADIUS_METRES=40;
+export function selectBasis(rows,{radiusMetres=BASIS_RADIUS_METRES}={}){
+ if(!Number.isFinite(radiusMetres)||radiusMetres<=0)throw Error("Invalid basis radius");
  const sorted=rows.filter(p=>p.sendable!==false&&p.hotspotScore>0).sort((a,b)=>compareRows(a,b,'maximum-coverage'));
  const chosen=new Map(sorted.slice(0,500).map(p=>[p.propertyId,p]));
- const cos=Math.max(.05,Math.cos((sorted[0]?.lat??0)*Math.PI/180)),cell=20,grid=new Map();
+ const cos=Math.max(.05,Math.cos((sorted[0]?.lat??0)*Math.PI/180)),cell=radiusMetres,grid=new Map();
  const point=p=>[p.lng*111320*cos,p.lat*111320];
  for(const p of sorted){if(!Number.isFinite(p.lat)||!Number.isFinite(p.lng))continue;const [x,y]=point(p),key=Math.floor(x/cell)+','+Math.floor(y/cell);if(!grid.has(key))grid.set(key,[]);grid.get(key).push(p);}
  for(const p of sorted.slice(0,250)){
@@ -49,7 +52,7 @@ export async function waitForFeeRetry(index,{externalRetryAt=0,now=Date.now,slee
  while(deadline>now())await sleep(Math.min(60000,deadline-now()));
 }
 export async function collectBasisFees(ids,{records={},fetchImpl=fetch,now=Date.now,sleep=ms=>new Promise(r=>setTimeout(r,ms)),concurrency=8,intervalMs=50,budgetMs=300000,maxRequests=1000,onCheckpoint=async()=>{},checkpointEvery=100}={}){
- if(!Number.isInteger(concurrency)||concurrency<1||concurrency>16||!Number.isFinite(intervalMs)||intervalMs<10&&intervalMs!==1)throw Error('Invalid measured throughput profile');
+ if(!Number.isInteger(concurrency)||concurrency<1||concurrency>32||!Number.isFinite(intervalMs)||intervalMs<10&&intervalMs!==1)throw Error('Invalid measured throughput profile');
  records=Object.fromEntries(Object.entries(records).filter(([id,r])=>/^[1-9]\d{0,15}$/.test(id)&&validKnown(r,now())).map(([id,r])=>[id,{...r}]));
  const queue=[...new Set(ids)].filter(id=>!validKnown(records[id],now())),started=now();let cursor=0,requests=0,rateLimits=0,retryAt=0,stopped=false,pacing=Promise.resolve(),lastCheckpoint=0,checkpointTail=Promise.resolve();const errors={};
  const coverage=()=>{const known=ids.filter(id=>validKnown(records[id],now())).length;return {known,recorded:known,total:ids.length,missing:ids.length-known,stale:0,complete:known===ids.length,retained:true};};
@@ -66,7 +69,7 @@ export async function collectBasisFees(ids,{records={},fetchImpl=fetch,now=Date.
   }
  });
  const settled=await Promise.allSettled(workers);const failure=settled.find(r=>r.status==='rejected');if(failure)throw failure.reason;
- await checkpoint();return {records,...progress()};
+ if(requests)await checkpoint();return {records,...progress()};
 }
 
 export async function scoringCore(){
@@ -119,10 +122,10 @@ async function main(){
  const feeResult=await collectBasisFees(basis.map(p=>p.propertyId),{records,maxRequests:feeBudget,budgetMs,concurrency:Number(process.env.FEE_CONCURRENCY??8),intervalMs:Number(process.env.FEE_INTERVAL_MS??50),
   onCheckpoint:(records,progress)=>logFeeCheckpoint({cityId,records,progress,checkpoint})
  });
- const result={...buildRankings(rows,{fees:feeResult.records,retainFees:true}),cityId,sourceFetchedAt:city.fetchedAt,fees:feeResult.records,feeRequestBudget:feeBudget,feeTimeBudgetMs:budgetMs,feeBudgetReached:feeResult.budgetReached,feeRequests:feeResult.requests,feeRateLimits:feeResult.rateLimits,feeRetryAt:feeResult.retryAt,feeErrors:feeResult.errors,feeScope:'basis-500-nearest-1',basisVersion:1,basisIds:basis.map(p=>p.propertyId),basisCoverage:feeResult.coverage,feeRetention:'until-refreshed',fullDatasetRequiredForStarredSearch:true};
+ const result={...buildRankings(rows,{fees:feeResult.records,retainFees:true}),cityId,sourceFetchedAt:city.fetchedAt,fees:feeResult.records,feeRequestBudget:feeBudget,feeTimeBudgetMs:budgetMs,feeBudgetReached:feeResult.budgetReached,feeRequests:feeResult.requests,feeRateLimits:feeResult.rateLimits,feeRetryAt:feeResult.retryAt,feeErrors:feeResult.errors,feeScope:'basis-500-nearest-1',basisVersion:BASIS_VERSION,basisRadiusMetres:BASIS_RADIUS_METRES,basisIds:basis.map(p=>p.propertyId),basisCoverage:feeResult.coverage,feeRetention:'until-refreshed',fullDatasetRequiredForStarredSearch:true};
  const stamp=(process.env.GITHUB_RUN_ID??Date.now())+'-'+(process.env.GITHUB_RUN_ATTEMPT??'1'),assetName='rankings-'+cityId+'-'+stamp+'.json.gz';
  const raw=Buffer.from(JSON.stringify(result)),compressed=gzipSync(raw,{level:6});await writeFile(join(dir,assetName),compressed);
- const manifest={status:result.feeCoverage.complete?'ready':result.basisCoverage.complete?'basis-ready':'partial-fees',assetName,encoding:'gzip',bytes:compressed.length,sha256:createHash('sha256').update(raw).digest('hex'),compressedSha256:createHash('sha256').update(compressed).digest('hex'),generatedAt:result.generatedAt,feeFreshUntil:candidates.length?Object.values(feeResult.records).reduce((min,r)=>Math.min(min,r.at+DAY),Date.now()+DAY):Date.now()+DAY,feeCoverage:result.feeCoverage,feeScope:result.feeScope,basisVersion:result.basisVersion,basisCoverage:result.basisCoverage,feeRetention:result.feeRetention,feeBudgetReached:result.feeBudgetReached,feeRetryAt:result.feeRetryAt,feeErrors:Object.keys(result.feeErrors).length,modes:MODES,primaryCount:result.primaryCount,reserveCount:result.reserveCount,preselectionOnly:true};
+ const manifest={status:result.feeCoverage.complete?'ready':result.basisCoverage.complete?'basis-ready':'partial-fees',assetName,encoding:'gzip',bytes:compressed.length,sha256:createHash('sha256').update(raw).digest('hex'),compressedSha256:createHash('sha256').update(compressed).digest('hex'),generatedAt:result.generatedAt,feeFreshUntil:candidates.length?Object.values(feeResult.records).reduce((min,r)=>Math.min(min,r.at+DAY),Date.now()+DAY):Date.now()+DAY,feeCoverage:result.feeCoverage,feeScope:result.feeScope,basisVersion:result.basisVersion,basisRadiusMetres:result.basisRadiusMetres,basisCoverage:result.basisCoverage,feeRetention:result.feeRetention,feeBudgetReached:result.feeBudgetReached,feeRetryAt:result.feeRetryAt,feeErrors:Object.keys(result.feeErrors).length,modes:MODES,primaryCount:result.primaryCount,reserveCount:result.reserveCount,preselectionOnly:true};
  await writeFile(join(dir,'rankings-manifest.json'),JSON.stringify(manifest,null,2));console.log(JSON.stringify({event:'rankings-ready',cityId,...manifest}));
 }
 if(process.argv[1]&&import.meta.url===pathToFileURL(resolve(process.argv[1])).href)main().catch(error=>{console.error(error.message);process.exitCode=1;});
