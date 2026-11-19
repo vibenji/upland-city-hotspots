@@ -44,6 +44,10 @@ export function selectBasis(rows){
  return [...chosen.values()];
 }
 const validKnown=(r,at)=>r&&typeof r.fee==='number'&&readFee(r.fee)!==undefined&&Number.isFinite(r.at)&&r.at>=0&&r.at<=at+2000;
+export async function waitForFeeRetry(index,{externalRetryAt=0,now=Date.now,sleep=ms=>new Promise(r=>setTimeout(r,ms))}={}){
+ const deadline=Math.max(0,...[externalRetryAt,...(index?.cities??[]).map(c=>c.rankings?.feeRetryAt??0)].filter(value=>Number.isFinite(value)&&value>=0));
+ while(deadline>now())await sleep(Math.min(60000,deadline-now()));
+}
 export async function collectBasisFees(ids,{records={},fetchImpl=fetch,now=Date.now,sleep=ms=>new Promise(r=>setTimeout(r,ms)),concurrency=8,intervalMs=50,budgetMs=300000,maxRequests=1000,onCheckpoint=async()=>{},checkpointEvery=100}={}){
  if(!Number.isInteger(concurrency)||concurrency<1||concurrency>16||!Number.isFinite(intervalMs)||intervalMs<10&&intervalMs!==1)throw Error('Invalid measured throughput profile');
  records=Object.fromEntries(Object.entries(records).filter(([id,r])=>/^[1-9]\d{0,15}$/.test(id)&&validKnown(r,now())).map(([id,r])=>[id,{...r}]));
