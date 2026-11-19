@@ -1,0 +1,40 @@
+# Wibenji — audit existing publications without rescanning or querying Upland.
+name: Verify published city data
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths: [.github/workflows/verify-data.yml]
+permissions:
+  contents: write
+concurrency:
+  group: daily-city-scan-service
+  cancel-in-progress: false
+jobs:
+  audit:
+    name: Verify full maps, three lists and required retained fees
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - name: Read public source at this commit
+        shell: bash
+        run: |
+          git init source
+          git -C source remote add origin https://github.com/vibenji/upland-city-hotspots.git
+          git -C source fetch --depth 1 origin "$GITHUB_SHA"
+          git -C source checkout --detach FETCH_HEAD
+      - name: Test audit policy and corruption detection
+        run: node --test source/*.test.mjs
+      - name: Independently verify existing published city payloads
+        working-directory: source
+        run: node status-report.mjs
+      - name: Keep verification reports even on failure
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: city-verification-report
+          path: source/reports/audit/status-report.*
+          retention-days: 7
+          if-no-files-found: warn
