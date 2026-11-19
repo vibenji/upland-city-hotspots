@@ -5,7 +5,7 @@ import {gzipSync} from 'node:zlib';
 import {createHash} from 'node:crypto';
 import {resolve,join} from 'node:path';
 import {pathToFileURL} from 'node:url';
-import {waitForFeeRetry} from './build-lists.mjs';
+import {waitForFeeRetry,BASIS_VERSION,BASIS_RADIUS_METRES} from './build-lists.mjs';
 const REPO='vibenji/upland-city-hotspots',TAG='current-data';
 const priority=['9','32','35'];
 export function orderCities(rows,names=[]){
@@ -15,7 +15,7 @@ export function orderCities(rows,names=[]){
 }
 export const cityMatrix=cities=>({include:cities.map(({id,name})=>({id,name}))});
 export function needsFeeRefresh(city,at=Date.now()){
- const r=city.rankings;return city.complete&&(!r?.url||!(r.feeCoverage?.complete===true||r.feeScope==='basis-500-nearest-1'&&r.basisVersion===1&&r.basisCoverage?.complete===true));
+ const r=city.rankings;return city.complete&&(!r?.url||!(r.feeCoverage?.complete===true||r.feeScope==='basis-500-nearest-1'&&r.basisVersion===BASIS_VERSION&&r.basisRadiusMetres===BASIS_RADIUS_METRES&&r.basisCoverage?.complete===true));
 }
 export function recoveryCities(index,ids=null){
  return index.cities.filter(c=>(!ids||ids.includes(c.id))&&((!c.complete&&c.status==='failed')||needsFeeRefresh(c)));
