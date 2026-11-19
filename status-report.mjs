@@ -6,7 +6,7 @@ import {createHash} from 'node:crypto';
 import {resolve,join} from 'node:path';
 import {pathToFileURL} from 'node:url';
 import {feeCoverage,readFee,DAY,validateFeeCache} from './fee-state.mjs';
-import {scoringCore,buildRankings} from './build-lists.mjs';
+import {scoringCore,buildRankings,selectBasis,BASIS_VERSION,BASIS_RADIUS_METRES} from './build-lists.mjs';
 const MODES=['maximum-coverage','balanced','lowest-fees'],REPO='vibenji/upland-city-hotspots';
 const sha=b=>createHash('sha256').update(b).digest('hex');
 export function decodeAsset(compressed,metadata){
@@ -15,7 +15,7 @@ export function decodeAsset(compressed,metadata){
  return JSON.parse(raw.toString('utf8'));
 }
 export function auditCity(record,city,ranking,{candidateRows=null,candidateIds=candidateRows?.map(p=>p.propertyId)??[],now=Date.now()}={}){
- const row={id:record.id,name:record.name,maps:'invalid',lists:'missing',mapAt:city?.fetchedAt??record.fetchedAt??null,listAt:ranking?.generatedAt??null,fees:feeCoverage(candidateIds,ranking?.fees??{},now),complete:false,problems:[]};
+ const row={id:record.id,name:record.name,maps:'invalid',lists:'missing',mapAt:city?.fetchedAt??record.fetchedAt??null,listAt:ranking?.generatedAt??null,fees:feeCoverage(candidateIds,ranking?.fees??{},now),requiredFees:{known:0,total:0,missing:0,complete:false},feeScope:ranking?.feeScope??'all-candidates',complete:false,problems:[]};
  try{
   if(!record.complete||record.dataset?.allParcels!==true||city?.schemaVersion!==1||!city.complete||city.cityId!==record.id||!Array.isArray(city.properties))throw Error('Missing complete matching map payload');
   const ids=new Set();let sources=0,plants=0,structures=0;
@@ -30,11 +30,27 @@ export function auditCity(record,city,ranking,{candidateRows=null,candidateIds=c
   if(ranking.cityId!==record.id||ranking.sourceFetchedAt!==city?.fetchedAt||ranking.candidateCount!==candidateIds.length)throw Error('Rankings do not match full city snapshot/candidates');
   const generatedAt=Date.parse(ranking.generatedAt);if(!Number.isFinite(generatedAt)||generatedAt>now+2000)throw Error('Invalid ranking timestamp');
   validateFeeCache({schemaVersion:1,cityId:record.id,records:ranking.fees},record.id,now);
+  if(record.rankings?.feeScope!==ranking.feeScope)throw Error('Index and ranking fee scope mismatch');
   const candidates=new Set(candidateIds);
-  if(Object.keys(ranking.fees).some(id=>!candidates.has(id)))throw Error('Fee record outside eligible candidate set');
-  for(const mode of MODES){const list=ranking.lists?.[mode];if(!Array.isArray(list)||list.length!==Math.min(500,candidates.size))throw Error('Missing or truncated '+mode+' list');const seen=new Set();for(const item of list){if(!candidates.has(item.propertyId)||seen.has(item.propertyId))throw Error('Invalid '+mode+' member');seen.add(item.propertyId);if(item.sendFee!==undefined){const fee=ranking.fees[item.propertyId];if(readFee(item.sendFee)===undefined||!fee||item.sendFee!==fee.fee||fee.at+DAY<=generatedAt)throw Error('Unverified fee in '+mode);}else if(item.feeUnknown!==true)throw Error('Unknown fee must be marked explicitly');}}
   if(!Array.isArray(candidateRows))throw Error('Missing independently scored candidate rows');
-  const expected=buildRankings(candidateRows,{fees:ranking.fees,at:generatedAt});
+  let requiredIds=candidateIds;
+  if(ranking.feeScope==='basis-500-nearest-1'){
+   if(ranking.basisVersion!==BASIS_VERSION||ranking.basisRadiusMetres!==BASIS_RADIUS_METRES||ranking.feeRetention!=='until-refreshed')throw Error('Unsupported basis version, radius or retention policy');
+   requiredIds=selectBasis(candidateRows).map(p=>p.propertyId);
+   if(JSON.stringify(ranking.basisIds)!==JSON.stringify(requiredIds))throw Error('Basis IDs do not match independently recomputed pool');
+   const manifest=record.rankings;
+   for(const key of ['feeScope','basisVersion','basisRadiusMetres','feeRetention'])if(manifest?.[key]!==ranking[key])throw Error('Index and ranking policy mismatch: '+key);
+  }else if(ranking.feeScope&&!['all-candidates','highest-coverage-1000-candidates'].includes(ranking.feeScope))throw Error('Unsupported fee scope');
+  const required=feeCoverage(requiredIds,ranking.fees,now);
+  row.requiredFees={known:required.recorded,total:required.total,missing:required.missing,complete:required.recorded===required.total,retained:true};
+  if(ranking.feeScope==='basis-500-nearest-1'){
+   for(const coverage of [ranking.basisCoverage,record.rankings?.basisCoverage]){
+    if(!coverage||coverage.known!==row.requiredFees.known||coverage.total!==row.requiredFees.total||coverage.missing!==row.requiredFees.missing||coverage.complete!==row.requiredFees.complete)throw Error('Basis coverage metadata does not match verified fee records');
+   }
+  }
+  if(!row.requiredFees.complete)throw Error(row.requiredFees.missing+' missing required fees');
+  for(const mode of MODES){const list=ranking.lists?.[mode];if(!Array.isArray(list)||list.length!==Math.min(500,candidates.size))throw Error('Missing or truncated '+mode+' list');const seen=new Set();for(const item of list){if(!candidates.has(item.propertyId)||seen.has(item.propertyId))throw Error('Invalid '+mode+' member');seen.add(item.propertyId);if(item.sendFee!==undefined){const fee=ranking.fees[item.propertyId];if(readFee(item.sendFee)===undefined||!fee||item.sendFee!==fee.fee)throw Error('Unverified fee in '+mode);}else if(item.feeUnknown!==true)throw Error('Unknown fee must be marked explicitly');}}
+  const expected=buildRankings(candidateRows,{fees:ranking.fees,at:generatedAt,retainFees:true});
   for(const mode of MODES)if(JSON.stringify(ranking.lists[mode])!==JSON.stringify(expected.lists[mode]))throw Error('Incorrect order, scores or fee state in '+mode);
   row.lists='verified';
  }catch(error){row.problems.push(error.message);}
@@ -44,26 +60,27 @@ export function auditCity(record,city,ranking,{candidateRows=null,candidateIds=c
  row.mapFresh=Number.isFinite(mapAge)&&mapAge<DAY;row.listFresh=Number.isFinite(listAge)&&listAge<DAY;
  if(!row.mapFresh)row.problems.push('Map older than 24h or missing');
  if(!row.listFresh)row.problems.push('Lists older than 24h or missing');
- if(row.fees.missing)row.problems.push(row.fees.missing+' missing fees');if(row.fees.stale)row.problems.push(row.fees.stale+' stale fees');
- row.complete=row.maps==='verified'&&row.lists==='verified'&&row.mapFresh&&row.listFresh&&row.fees.complete;
+ // Fees outside the required pool and retained fact age are informational.
+ row.complete=row.maps==='verified'&&row.lists==='verified'&&row.mapFresh&&row.listFresh&&row.requiredFees.complete;
  return row;
 }
 export function buildReport(planned,rows,now=Date.now()){
  const byId=new Map(rows.map(r=>[r.id,r]));
  const cities=planned.map(c=>byId.get(c.id)??{...c,maps:'missing',lists:'missing',fees:{known:0,recorded:0,total:0,stale:0,missing:0,complete:false},complete:false,problems:['Planned city missing from published catalog']});
  for(const row of rows)if(!cities.some(c=>c.id===row.id))cities.push(row);
- return {schemaVersion:1,generatedAt:new Date(now).toISOString(),basis:'verified published gzip payloads, candidate membership and fee timestamps',freshnessHours:24,complete:cities.length>0&&cities.every(c=>c.complete),cities};
+ return {schemaVersion:1,generatedAt:new Date(now).toISOString(),basis:'verified published gzip payloads, candidate membership and fee timestamps',mapAndListFreshnessHours:24,feeRetention:'until-refreshed',requiredBasis:{version:BASIS_VERSION,radiusMetres:BASIS_RADIUS_METRES,maxTargets:750},complete:cities.length>0&&cities.every(c=>c.complete),cities};
 }
 const safe=value=>String(value??'—').replaceAll('|','/').replace(/[\r\n]+/g,' ');
 export function reportMarkdown(report){
  const rows=report.cities,totals=rows.reduce((a,r)=>{for(const k of ['known','recorded','total','stale','missing'])a[k]+=r.fees[k];return a;},{known:0,recorded:0,total:0,stale:0,missing:0});
- return '# Wibenji · City data verification\n\nChecked: '+report.generatedAt+' (UTC). Fresh means verified within 24 hours.\n\n'+
-  '- Overall: **'+(report.complete?'complete':'incomplete')+'**; '+rows.filter(r=>r.complete).length+'/'+rows.length+' cities fully verified and fresh.\n'+
+ const required=rows.reduce((sum,r)=>({known:sum.known+(r.requiredFees?.known??0),total:sum.total+(r.requiredFees?.total??0)}),{known:0,total:0});
+ return '# Wibenji · City data verification\n\nChecked: '+report.generatedAt+' (UTC). Maps and lists must be less than 24 hours old. Verified fee facts are retained until refreshed.\n\n'+
+  '- Overall: **'+(report.complete?'complete':'incomplete')+'**; '+rows.filter(r=>r.complete).length+'/'+rows.length+' cities meet the current publication policy.\n'+
   '- Maps verified: '+rows.filter(r=>r.maps==='verified').length+'/'+rows.length+'; three mode lists verified: '+rows.filter(r=>r.lists==='verified').length+'/'+rows.length+'.\n'+
-  '- Fees: **'+totals.known+'/'+totals.total+' fresh**, '+totals.recorded+' ever recorded, '+totals.stale+' stale, '+totals.missing+' missing.\n\n'+
-  'Full means all eligible candidates, not only the 500 entries in each shortcut list. Zero-candidate cities have no candidate fees to collect. Public map completeness is scoped to published neighborhood boundaries. Unknown fees never count as zero.\n\n'+
-  '| City | Maps | 3 lists | Fresh fees / candidates | Recorded | Stale | Missing | Map timestamp (UTC) | List timestamp (UTC) | Oldest recorded fee (UTC) | Complete | Details |\n|---|---|---|---:|---:|---:|---:|---|---|---|---|---|\n'+
-  rows.map(r=>'| '+[r.name,r.maps,r.lists,r.fees.known+'/'+r.fees.total,r.fees.recorded,r.fees.stale,r.fees.missing,r.mapAt,r.listAt,r.oldestFeeAt,r.complete?'yes':'no',r.problems.join('; ')||'OK'].map(safe).join(' | ')+' |').join('\n')+
+  '- Required retained fees: **'+required.known+'/'+required.total+'**. All-candidate facts: '+totals.recorded+'/'+totals.total+' recorded; '+totals.missing+' missing outside or inside the required pool; '+totals.stale+' records older than 24h (informational).\n\n'+
+  'The required pool is independently recomputed: top 500 coverage targets plus at most one nearest landing within 40m for each leading 250 (at most 750 IDs). Legacy publications require all candidate fees. Fees outside the current candidate set remain valid historical evidence. Zero-candidate cities need no fees. Unknown fees never count as zero. Full maps, both asset hashes, exact pool IDs, fee values/timestamps and all three independently rebuilt lists are checked.\n\n'+
+  '| City | Maps | 3 lists | Required fees | All-candidate recorded | Older than 24h (info) | Missing candidates (info) | Map timestamp (UTC) | List timestamp (UTC) | Oldest recorded fee (UTC) | Complete | Details |\n|---|---|---|---:|---:|---:|---:|---|---|---|---|---|\n'+
+  rows.map(r=>'| '+[r.name,r.maps,r.lists,r.requiredFees?r.requiredFees.known+'/'+r.requiredFees.total:'unverified',r.fees.recorded+'/'+r.fees.total,r.fees.stale,r.fees.missing,r.mapAt,r.listAt,r.oldestFeeAt,r.complete?'yes':'no',r.problems.join('; ')||'OK'].map(safe).join(' | ')+' |').join('\n')+
   '\n\n[Download machine-readable report](https://github.com/'+REPO+'/releases/download/current-data/status-report.json) · [City index](https://github.com/'+REPO+'/releases/download/current-data/index.json)\n';
 }
 function gh(...args){return execFileSync('gh',[...args,'--repo',REPO],{encoding:'utf8',timeout:180000,stdio:['ignore','pipe','pipe']}).trim();}
