@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {selectBasis,collectBasisFees,buildRankings} from './build-lists.mjs';
+import {selectBasis,collectBasisFees,buildRankings,waitForFeeRetry} from './build-lists.mjs';
 import {needsFeeRefresh} from './scan-queue.mjs';
 const row=(id,score,lat=35,lng=-119)=>({propertyId:String(id),hotspotScore:score,lat,lng});
 test('basis is bounded to top 500 plus one nearby neighbor per leading target without changing full rows',()=>{
@@ -28,4 +28,11 @@ test('complete published basis or full coverage does not restart just because fe
  assert.equal(needsFeeRefresh({complete:true,rankings:{url:'x',feeScope:'all-candidates',feeCoverage:{complete:true},feeFreshUntil:1}}),false);
  assert.equal(needsFeeRefresh({complete:true,rankings:{url:'x',feeScope:'basis-500-nearest-1',basisCoverage:{complete:true},basisVersion:1}}),false);
  assert.equal(needsFeeRefresh({complete:true,rankings:{url:'x',feeScope:'basis-500-nearest-1',basisCoverage:{complete:false}}}),true);
+});
+
+test('a rerun waits for both published city and benchmark Retry-After before API work',async()=>{
+ let clock=1000;const waits=[];
+ await waitForFeeRetry({cities:[{rankings:{feeRetryAt:3000}}]},{externalRetryAt:4000,now:()=>clock,sleep:async ms=>{waits.push(ms);clock+=ms;}});
+ assert.deepEqual(waits,[3000]);assert.equal(clock,4000);
+ await waitForFeeRetry({cities:[{rankings:{feeRetryAt:2000}}]},{externalRetryAt:1,now:()=>clock,sleep:async()=>{throw Error('expired deadlines must not wait');}});
 });
