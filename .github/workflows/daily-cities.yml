@@ -166,7 +166,7 @@ jobs:
           git -C source remote add origin https://github.com/vibenji/upland-city-hotspots.git
           git -C source fetch --depth 1 origin "$GITHUB_SHA"
           git -C source checkout --detach FETCH_HEAD
-      - name: Verify published map/list hashes and every candidate fee
+      - name: Verify map/list hashes, recomputed basis and retained fees
         working-directory: source
         run: node status-report.mjs
       - name: Keep machine and human readable verification reports
