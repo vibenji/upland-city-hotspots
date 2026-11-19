@@ -1,4 +1,4 @@
-name: Complete city fees and verification
+name: Fast city basis fees
 on:
   push:
     branches: [main]
@@ -17,13 +17,16 @@ env:
   LIVE_PROCESSOR: 'true'
 jobs:
   plan:
-    name: Plan city fees and repairs
+    name: Plan basis and measure fee throughput
     if: ${{ github.event_name != 'workflow_run' || github.event.workflow_run.head_branch == 'main' }}
     runs-on: ubuntu-24.04
-    timeout-minutes: 60
+    timeout-minutes: 10
     outputs:
       matrix: ${{ steps.recovery.outputs.matrix }}
       has_work: ${{ steps.recovery.outputs.has_work }}
+      concurrency: ${{ steps.measure.outputs.concurrency }}
+      interval: ${{ steps.measure.outputs.interval }}
+      retry_at: ${{ steps.measure.outputs.retry_at }}
     steps:
       - name: Read public source at this commit
         shell: bash
@@ -38,12 +41,12 @@ jobs:
         id: recovery
         working-directory: source
         run: node scan-queue.mjs recovery-plan
-      - name: Publish initial city verification report
-        continue-on-error: true
+      - name: Measure three bounded request rates on this runner
+        id: measure
         working-directory: source
-        run: node status-report.mjs
+        run: node measure-fees.mjs
   city:
-    name: Fees & repair · ${{ matrix.name }}
+    name: Basis fees · ${{ matrix.name }}
     needs: plan
     if: ${{ needs.plan.outputs.has_work == 'true' }}
     strategy:
@@ -51,7 +54,7 @@ jobs:
       max-parallel: 1
       matrix: ${{ fromJSON(needs.plan.outputs.matrix) }}
     runs-on: ubuntu-24.04
-    timeout-minutes: 350
+    timeout-minutes: 15
     steps:
       - name: Read public source at this commit
         shell: bash
@@ -60,11 +63,18 @@ jobs:
           git -C source remote add origin https://github.com/vibenji/upland-city-hotspots.git
           git -C source fetch --depth 1 origin "$GITHUB_SHA"
           git -C source checkout --detach FETCH_HEAD
-      - name: Load all candidate fees and repair ${{ matrix.name }}
+      - name: Load basis fees and preserve complete map for ${{ matrix.name }}
         working-directory: source
         env:
           CITY_IDS: ${{ matrix.id }}
-        run: node scan-queue.mjs repair
+          FEE_CONCURRENCY: ${{ needs.plan.outputs.concurrency }}
+          FEE_INTERVAL_MS: ${{ needs.plan.outputs.interval }}
+          FEE_TIME_BUDGET_MS: '300000'
+          FEE_MAX_REQUESTS: '1000'
+          FEE_RESUME_AT: ${{ needs.plan.outputs.retry_at }}
+        run: |
+          node -e "setTimeout(() => {}, Math.max(0, Number(process.env.FEE_RESUME_AT) - Date.now()))"
+          node scan-queue.mjs repair
       - name: Keep city measurements
         if: always()
         uses: actions/upload-artifact@v7
@@ -76,11 +86,11 @@ jobs:
           retention-days: 7
           if-no-files-found: ignore
   report:
-    name: Verify all cities and publish report
+    name: Publish basis readiness for every city
     needs: [plan, city]
     if: ${{ always() && needs.plan.result == 'success' }}
     runs-on: ubuntu-24.04
-    timeout-minutes: 60
+    timeout-minutes: 10
     steps:
       - name: Read public source at this commit
         shell: bash
@@ -89,14 +99,14 @@ jobs:
           git -C source remote add origin https://github.com/vibenji/upland-city-hotspots.git
           git -C source fetch --depth 1 origin "$GITHUB_SHA"
           git -C source checkout --detach FETCH_HEAD
-      - name: Verify published map/list hashes and every candidate fee
+      - name: Summarize published basis and full-city coverage separately
         working-directory: source
-        run: node status-report.mjs
+        run: node basis-report.mjs
       - name: Keep machine and human readable verification reports
         if: always()
         uses: actions/upload-artifact@v7
         with:
           name: city-verification-report
-          path: source/reports/audit/status-report.*
+          path: source/reports/basis-status/basis-status.*
           retention-days: 7
           if-no-files-found: warn
